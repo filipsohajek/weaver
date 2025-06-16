@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <random>
 
@@ -6,7 +7,7 @@
 #include "weaver/dsp/kernels_generic.h"
 
 TEST_CASE("AVX2 & generic multicorrelation is correct", "[kernels]") {
-  const size_t n = 2048;
+  const size_t n = 65536;
   const size_t n_corrs = 3;
 
   std::mt19937_64 mt{};
@@ -24,14 +25,14 @@ TEST_CASE("AVX2 & generic multicorrelation is correct", "[kernels]") {
   float mix_phase_step = 2 * std::numbers::pi_v<float> / 128.0f;
   double code_init_phase = 0.0;
   double code_phase_step = 0.325;
-  double corr_offset = 0.3;
+  double corr_offset = 0.3312312;
   std::complex<float> out_avx2[n_corrs] {};
-  BENCHMARK("mcorr_avx2") {
+  BENCHMARK("mcorr_avx2 (n=65536)") {
     std::fill(out_avx2, out_avx2 + n_corrs, 0);
     weaver::dsp::mmcorr_avx2<n_corrs, weaver::dsp::Modulation::BPSK>(n, samples, chips.data(), out_avx2, mix_init_phase, mix_phase_step, corr_offset, code_init_phase, code_phase_step);
   };
   std::complex<float> out_gen[n_corrs] {};
-  BENCHMARK("mcorr_gen") {
+  BENCHMARK("mcorr_gen (n=65536)") {
    std::fill(out_gen, out_gen +n_corrs, 0);
     weaver::dsp::mmcorr_gen<n_corrs, weaver::dsp::Modulation::BPSK>(n, samples, chips.data(), out_gen, mix_init_phase, mix_phase_step, corr_offset, code_init_phase, code_phase_step);
     return out_gen;
@@ -53,8 +54,10 @@ TEST_CASE("AVX2 & generic multicorrelation is correct", "[kernels]") {
   for (size_t i = 0; i < n_corrs; i++) {
     double avx2_error = std::pow(std::abs(out_avx2[i] - out_exact[i]), 2);
     double gen_error = std::pow(std::abs(out_gen[i] - out_exact[i]), 2);
-    std::cout << "avx2: " << avx2_error << ", per sample: " << avx2_error / n << "\n";
-    std::cout << "generic: " << gen_error << ", per sample: " << gen_error / n << "\n";
+    INFO ("avx2: " << avx2_error << ", per sample: " << avx2_error / n);
+    REQUIRE(avx2_error / n <= 1e-6);
+    INFO("generic: " << gen_error << ", per sample: " << gen_error / n);
+    REQUIRE(gen_error / n <= 1e-6);
   }
 
   std::free(samples);

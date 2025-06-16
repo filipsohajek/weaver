@@ -31,22 +31,22 @@ void mmcorr(size_t n,
 #endif
 }
 
-template<size_t NCorrelations, Modulation Modulation>
+template<typename T, Modulation Modulation>
 void modulate(size_t n,
               const u8* __restrict__ chips,
-              cp_i16* __restrict__ out,
+              T* __restrict__ out,
               f32 mix_init_phase,
               f32 mix_phase_step,
               f64 code_init_phase,
               f64 code_phase_step) {
 #ifdef __AVX2__
-  modulate_avx2<NCorrelations, Modulation>(n, chips, out, mix_init_phase, mix_phase_step,
+  modulate_avx2<T, Modulation>(n, chips, out, mix_init_phase, mix_phase_step,
                                            code_init_phase, code_phase_step);
   size_t rem_n = n % 8;
   if (rem_n) {
     size_t rem_offset = 8 * (n / 8);
     size_t processed_n = n - rem_offset;
-    modulate_gen<NCorrelations, Modulation>(
+    modulate_gen<T, Modulation>(
         rem_n, chips, out + rem_offset, mix_init_phase + processed_n * mix_phase_step,
         mix_phase_step, code_init_phase + n * code_phase_step, code_phase_step);
   }

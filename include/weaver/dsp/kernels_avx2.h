@@ -206,10 +206,10 @@ void modulate_avx2(size_t n,
 
       __m256i out_vec = _mm256_permute4x64_epi64(_mm256_packs_epi32(out_low, out_high), 0xd8);
 
-      _mm256_store_si256(reinterpret_cast<__m256i*>(out + i), out_vec);
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + i), out_vec);
     } else if constexpr (std::is_same_v<T, cp_f32>) {
-      _mm256_store_ps(reinterpret_cast<float*>(out + i), out_low_float);
-      _mm256_store_ps(reinterpret_cast<float*>(out + i + 4), out_high_float);
+      _mm256_storeu_ps(reinterpret_cast<float*>(out + i), out_low_float);
+      _mm256_storeu_ps(reinterpret_cast<float*>(out + i + 4), out_high_float);
     } else {
       static_assert(false, "sample type not supported by the AVX2 kernel");
     }

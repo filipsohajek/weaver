@@ -33,28 +33,32 @@ void mmcorr_gen(size_t n,
   }
 }
 
-template<size_t NCorrelations, Modulation Modulation>
+template<typename T, Modulation Modulation>
 void modulate_gen(size_t n,
                   const u8* __restrict__ chips,
-                  cp_i16* __restrict__ out,
+                  T* __restrict__ out,
                   f32 mix_init_phase,
                   f32 mix_phase_step,
                   f64 code_init_phase,
                   f64 code_phase_step) {
   cp_f32 mix_cp = std::polar(1.0f, mix_init_phase);
   cp_f32 mix_step_cp = std::polar(1.0f, mix_phase_step);
-  f64 code_phase = code_init_phase;
   for (size_t i = 0; i < n; i++) {
-    size_t chip_idx = static_cast<size_t>(code_phase);
+    size_t chip_idx = static_cast<size_t>(code_init_phase + i * code_phase_step);
     size_t chip_base = chip_idx / 4, chip_off = chip_idx % 4;
     uint8_t chip = (chips[chip_base] << (2 * chip_off)) >> 6;
 
     cp_f32 out_float = {mix_cp.real() * ((chip & 0x2) ? -1.0f : 1.0f),
                         mix_cp.imag() * ((chip & 0x1) ? -1.0f : 1.0f)};
-    out[i] = cp_cast<i16>(out_float * 32767.0f);
+    if constexpr (std::is_same_v<T, cp_f32>) {
+      out[i] = out_float;
+    } else if constexpr (std::is_same_v<T, cp_i16>) {
+      out[i] = cp_cast<i16>(out_float * 32767.0f);
+    } else {
+      static_assert(false, "sample type not supported by the generic kernel");
+    }
 
     mix_cp *= mix_step_cp;
-    code_phase += code_phase_step;
   }
 }
 

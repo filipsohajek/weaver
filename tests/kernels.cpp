@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/benchmark/catch_benchmark.hpp>
 #include <random>
+#include <fstream>
 
 #include "weaver/dsp/kernels_avx2.h"
 #include "weaver/dsp/kernels_generic.h"
@@ -61,4 +62,53 @@ TEST_CASE("AVX2 & generic multicorrelation is correct", "[kernels]") {
   }
 
   std::free(samples);
+}
+
+TEST_CASE("AVX2 & generic modulation is correct", "[kernels][mod]") {
+  const size_t n = 65536;
+
+  std::mt19937_64 mt{};
+  std::uniform_int_distribution<short> unif;
+  std::uniform_int_distribution<unsigned char> unif_c;
+  std::vector<unsigned char> chips(n);
+  std::fill(chips.begin(), chips.end(), 0x99);
+  std::complex<float>* samples_avx2 = reinterpret_cast<std::complex<float>*>(
+      std::aligned_alloc(32, sizeof(std::complex<float>) * n));
+  std::complex<float>* samples_generic = reinterpret_cast<std::complex<float>*>(
+      std::aligned_alloc(32, sizeof(std::complex<float>) * n));
+
+  float mix_init_phase = 0.0f;
+  float mix_phase_step = 2 * std::numbers::pi_v<float> / 128.0f;
+  double code_init_phase = 0.0;
+  double code_phase_step = 0.325;
+  BENCHMARK("modulate_avx2 (n=65536)") {
+    weaver::dsp::modulate_avx2<std::complex<float>, weaver::dsp::Modulation::BPSK>(n, chips.data(), samples_avx2, mix_init_phase, mix_phase_step, code_init_phase, code_phase_step);
+    return samples_avx2;
+  };
+
+  BENCHMARK("modulate_gen (n=65536)") {
+    weaver::dsp::modulate_gen<std::complex<float>, weaver::dsp::Modulation::BPSK>(n, chips.data(), samples_generic, mix_init_phase, mix_phase_step, code_init_phase, code_phase_step);
+    return samples_generic;
+  };
+
+  double err_avx2 = 0.0, err_gen = 0.0;
+
+  for (size_t i = 0; i < n; i++) {
+    double mix_phase = mix_init_phase + i * mix_phase_step;
+    std::complex<float> in = weaver::cp_cast<float>(std::polar(1.0, mix_phase));
+    size_t chip_idx = code_init_phase + i * code_phase_step;
+    std::complex<float> out { in.real() * ((chip_idx%2) ? 1.0f : -1.0f), in.imag() * ((chip_idx%2) ? -1.0f : 1.0f) };
+    err_avx2 += std::pow(std::abs(out - samples_avx2[i]), 2);
+    err_gen += std::pow(std::abs(out - samples_generic[i]), 2);
+  }
+  err_avx2 = std::sqrt(err_avx2);
+  err_gen = std::sqrt(err_gen);
+
+  INFO("avx2: " << err_avx2 << ", per sample: " << err_avx2 / n);
+  REQUIRE(err_avx2 / n <= 1e-5);
+  INFO("gen: " << err_gen << ", per sample: " << err_gen / n);
+  REQUIRE(err_gen / n <= 1e-5);
+
+  std::free(samples_avx2);
+  std::free(samples_generic);
 }

@@ -6,6 +6,7 @@
 namespace weaver {
 class Signal {
 public:
+  virtual ~Signal() {};
   virtual cp_f32 correlate(std::span<const cp_i16> samples_in,
                            std::span<cp_f32> out,
                            f32 sample_rate,

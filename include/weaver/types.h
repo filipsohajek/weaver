@@ -5,6 +5,8 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
+#include <Eigen/Core>
 
 namespace weaver {
 using u8 = uint8_t;
@@ -63,6 +65,9 @@ struct AlignedDeletor {
 
 template<typename T>
 using aligned_array = std::unique_ptr<T[], AlignedDeletor>;
+
+template<typename T>
+using aligned_vector = std::vector<T, Eigen::aligned_allocator<T>>;
 
 template<typename T>
 aligned_array<T> alloc_aligned_array(size_t alignment, size_t length) {

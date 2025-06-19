@@ -32,12 +32,31 @@ public:
     f32 doppler_freq;
     f32 val;
 
+    bool has_same_pos(const Candidate& other) const {
+      return (other.code_offset == code_offset) && (other.doppler_freq == doppler_freq);
+    }
+
+    void update(const Candidate& other) {
+      n_noncoh += other.n_noncoh;
+      val += other.val;
+    }
+
+    bool operator<(const Candidate& other) const {
+      return val < other.val;
+    }
+
+    bool operator>(f32 other_val) const {
+      return val > other_val;
+    }
+
     f64 p_val() const {
       return weaver::chi2_cdf(2*n_noncoh, val);
     }
   };
 
-  AcqEngine(std::unique_ptr<Signal> signal) : signal(std::move(signal)) {}
+  AcqEngine(std::unique_ptr<Signal> signal) : signal(std::move(signal)) {
+//    fft.SetFlag(Eigen::FFT<f32>::Flag::Unscaled);
+  }
 
   void reset(Parameters params) {
     this->params = params;
@@ -86,15 +105,14 @@ private:
   size_t fft_len() const { return 2 * signal_len(); }
 
   f64 residual_code_phase() const {
-    size_t res_samples = (noncoh_rem - params.n_noncoherent) * (signal_len() - signal->code_period_s() * params.sample_rate_hz);
-    return f64(res_samples) / (params.sample_rate_hz * signal->code_period_s());
+    f64 res_samples = (noncoh_rem - params.n_noncoherent) * (params.n_coherent * signal->code_period_s() * params.sample_rate_hz - signal_len());
+    return res_samples / (params.sample_rate_hz * signal->code_period_s());
   }
 
   void acq_single_bin(std::span<cp_f32> samples_fft,
                       ssize_t doppler_shift,
                       std::list<Candidate>& candidates,
-                      f64 real_var,
-                      f64 imag_var) {
+                      f64 real_var, f64 imag_var) {
     auto& mul_res = scratch;
     auto& corr_res = scratch2;
     dsp::mul_shift_cpf32(fft_len(), samples_fft.data(), replica_fft.data(), doppler_shift,
@@ -107,7 +125,7 @@ private:
       f32 cand_imag = (corr_res[code_i].imag()) / (std::sqrt(fft_len() * imag_var));
       f32 cand_val = std::pow(cand_real, 2) + std::pow(cand_imag, 2);
 
-      if (!cand_queue.empty() && (cand_queue.top().val > cand_val))
+      if (!cand_queue.empty() && (cand_queue.top() > cand_val))
         continue;
 
       f64 code_offset = (fft_len() - code_i) / (signal->code_period_s() * params.sample_rate_hz);

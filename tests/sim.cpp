@@ -29,7 +29,7 @@ TEST_CASE("simulation works", "[sim]") {
       .cn0 = 1e0
   });
   weaver::AcqEngine acq(std::make_unique<GPSL1Signal>(0));
-  acq.reset(weaver::AcqEngine::Parameters{.sample_rate_hz = 4e6, .n_coherent = 2, .n_noncoherent = 1});
+  acq.reset(weaver::AcqEngine::Parameters{.sample_rate_hz = 4e6, .n_coherent = 2, .n_noncoherent = 2});
 
   std::ofstream out("out");
 

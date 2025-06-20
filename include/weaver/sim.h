@@ -8,7 +8,7 @@ namespace weaver {
 struct SignalSim {
 public:
   struct SignalSettings {
-    std::unique_ptr<Signal> signal = nullptr;
+    std::shared_ptr<Signal> signal = nullptr;
 
     Eigen::Vector3d pos;
     Eigen::Vector3d vel;
@@ -27,8 +27,10 @@ public:
     std::normal_distribution<f32> noise(0, std::sqrt(noise_pwr));
     for (SignalSettings& signal : signals) {
       f64 carrier_freq = signal.signal->carrier_freq();
-      signal.signal->generate(scratch, sample_rate, signal.carrier_phase, 0, signal.code_phase); 
-      signal.code_phase += (n * t_step) / signal.signal->code_period_s();
+      f64 eff_vel = -signal.vel.dot(signal.pos.normalized());
+      f64 code_freq = (1.0/signal.signal->code_period_s()) * (1 + eff_vel / 299792458.0f);
+      signal.signal->generate(scratch, sample_rate, signal.carrier_phase, 0, signal.code_phase, code_freq);
+      signal.code_phase += n * code_freq / sample_rate;
       signal.code_phase = std::fmod(signal.code_phase, 1.0);
 
       f64 amplitude = std::sqrt(signal.cn0 * noise_pwr);

@@ -54,7 +54,7 @@ public:
     }
   };
 
-  AcqEngine(std::unique_ptr<Signal> signal) : signal(std::move(signal)) {
+  AcqEngine(std::shared_ptr<Signal> signal) : signal(std::move(signal)) {
 //    fft.SetFlag(Eigen::FFT<f32>::Flag::Unscaled);
   }
 
@@ -92,6 +92,10 @@ public:
     }
 
     return samples_in;
+  }
+
+  bool finished() const {
+    return noncoh_rem == 0;
   }
 
   const std::list<Candidate>& acq_candidates() const {
@@ -215,7 +219,7 @@ private:
   Parameters params;
   Eigen::FFT<f32> fft;
 
-  std::unique_ptr<Signal> signal;
+  std::shared_ptr<Signal> signal;
   aligned_vector<cp_f32> replica_fft;
   aligned_vector<cp_f32> samples;
   aligned_vector<cp_f32> scratch;

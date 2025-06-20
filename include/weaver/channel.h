@@ -1,0 +1,132 @@
+#pragma once
+#include "weaver/acq.h"
+#include "weaver/corr.h"
+#include "weaver/signal.h"
+#include "weaver/types.h"
+#include "weaver/kalman.h"
+
+namespace weaver {
+class Channel {
+public:
+  struct Parameters {
+    f64 sample_rate_hz;
+    AcqEngine::Parameters acq_params;
+    f64 acq_p_thresh = 0.05;
+
+    f32 init_code_disc_var = 1e-6;
+    f32 init_carrier_disc_var = 1e-4;
+
+    f64 code_noise_var = 0.00000001;
+    f64 phase_noise_var = 2e-5;
+    f64 freq_noise_var = 5;
+    f64 freq_rate_noise_var = 0.1;
+
+    f64 code_init_var = 0.0000001;
+    f64 phase_init_var = 1.0;
+    f64 freq_init_var = 250.0;
+    f64 freq_rate_init_var = 5.0;
+  };
+
+  enum class State {
+    FAILED,
+    ACQUISITION,
+    TRACK_INIT,
+  };
+
+  explicit Channel(std::shared_ptr<Signal> signal, Parameters params) : params(params), signal(signal), acq(signal), corr(signal, params.sample_rate_hz), trace_file("out_trace") {
+    acq.reset(params.acq_params);
+    state = State::ACQUISITION;
+  }
+
+  void process_samples(span<cp_i16> samples) {
+    while (!samples.empty()) {
+      switch (state) {
+        case State::FAILED:
+          return;
+        case State::ACQUISITION: {
+          samples = acq.process(samples);
+          if (!acq.finished())
+            continue;
+          AcqEngine::Candidate first_cand = acq.acq_candidates().back();
+          std::cout << std::format("acquisition: top candidate: code_offset={}, doppler_freq={}, val={}, p={}\n", first_cand.code_offset, first_cand.doppler_freq, first_cand.val, first_cand.p_val());
+          if (first_cand.p_val() >= params.acq_p_thresh) {
+            std::cout << "acquisition failed, failing channel\n";
+            state = State::FAILED;
+            continue;
+          }
+          setup_tracking(first_cand);
+          state = State::TRACK_INIT;
+          break;
+        }
+        case State::TRACK_INIT:
+          samples = process_track(samples);
+          break;
+      }
+    }
+  }
+private:
+  span<cp_i16> process_track(span<cp_i16> samples) {
+    span<cp_i16> res_samples = corr.process_samples(samples);
+    auto corr_opt = corr.take_result();
+    if (!corr_opt.has_value())
+      return res_samples;
+    Correlator::Result corr_res = corr_opt.value();
+
+    trace_file.write(reinterpret_cast<char*>(&corr_res.prompt), sizeof(cp_f32));
+    trace_file.write(reinterpret_cast<char*>(&trk_filter.state[0]), sizeof(f64));
+    trace_file.write(reinterpret_cast<char*>(&trk_filter.state[1]), sizeof(f64));
+    trace_file.write(reinterpret_cast<char*>(&trk_filter.state[2]), sizeof(f64));
+    trace_file.write(reinterpret_cast<char*>(&trk_filter.state[3]), sizeof(f64));
+    trace_file.flush();
+
+    std::cout << std::format("process_track: prompt.re={}, prompt.im={}, code_disc={}, carr_disc={}\n", corr_res.prompt.real(), corr_res.prompt.imag(), corr_res.code_disc_out, corr_res.carrier_disc_out);
+    update_filter(corr_res);
+
+    return res_samples;
+  }
+
+  void update_filter(Correlator::Result corr_res) {
+    trk_filter.update({corr_res.code_disc_out, corr_res.carrier_disc_out});  
+    trk_filter.state[1] = std::fmod(trk_filter.state[1], 1.0);
+    f64 code_offset = trk_filter.state[0];
+    f64 carr_phase = trk_filter.state[1];
+    f64 carr_freq = trk_filter.state[2];
+
+    corr.set_params(code_offset, carr_phase, carr_freq);
+    std::cout << std::format("update_filter: code_offset={}, carr_phase={}, carr_freq={}, carr_freq_rate={}\n", code_offset, carr_phase, carr_freq, trk_filter.state[3]);
+  }
+
+  void set_int_time(f64 int_time_codeper) {
+    corr.reset(int_time_codeper);
+    f64 int_time_s = corr.int_time_s();
+
+    trk_filter.meas_matrix = Eigen::Matrix<f64, 2, 4> {
+      {1, 0, 0, 0},
+      {0, 1, 0, 0}
+    };
+    trk_filter.state_step_matrix = Eigen::Matrix<f64, 4, 4> {
+      {1, 0, 0, 0},
+      {0, 1, int_time_s, 0.5 * int_time_s * int_time_s},
+      {0, 0, 1, int_time_s},
+      {0, 0, 0, 1}
+    };
+  }
+
+  void setup_tracking(AcqEngine::Candidate cand) {
+    corr.set_params(cand.code_offset, 0.0f, cand.doppler_freq);
+    trk_filter.state = Eigen::Vector<f64, 4> {cand.code_offset, 0.0f, cand.doppler_freq, 0};
+    trk_filter.state_cov = Eigen::DiagonalMatrix<f64, 4> {params.code_init_var, params.phase_init_var, params.freq_init_var, params.freq_rate_init_var};
+    trk_filter.process_noise_cov = Eigen::DiagonalMatrix<f64, 4> {params.code_noise_var, params.phase_noise_var, params.freq_noise_var, params.freq_rate_noise_var};
+    trk_filter.meas_noise_cov = Eigen::DiagonalMatrix<f64, 2> {params.init_code_disc_var, params.init_carrier_disc_var};
+    set_int_time(1.0);
+  }
+
+  std::ofstream trace_file;
+  State state;
+  Parameters params;
+  std::shared_ptr<Signal> signal;
+  AcqEngine acq;
+  Correlator corr;
+  KalmanFilter<4, 2> trk_filter;
+};
+}

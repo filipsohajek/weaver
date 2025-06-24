@@ -62,7 +62,10 @@ struct NELPCodeDiscriminator {
 template<dsp::IsCode Code, IsCodeDiscriminator CodeDisc>
 class CodeSignal : public Signal {
 public:
-  CodeSignal(u16 prn) : _prn(prn) {}
+  CodeSignal(u16 prn) : _prn(prn) {
+    chips.resize((2 * Code::CHIP_COUNT + 12 + 3) / 4);
+    Code::gen_chips(prn, chips);
+  }
 
   void correlate(std::span<const cp_i16> samples_in,
                  std::span<cp_f32> out,
@@ -78,7 +81,7 @@ public:
       code_init_phase += Code::CHIP_COUNT;
     f64 code_phase_step = Code::CHIP_RATE_HZ / (sample_rate * Code::CHIP_COUNT);
     dsp::mmcorr<2 * CodeDisc::SPREAD + 1, Code::MODULATION>(
-        samples_in.size(), samples_in.data(), Code::CHIPS[_prn].data(), out.data(), mix_init_phase,
+        samples_in.size(), samples_in.data(), chips.data(), out.data(), mix_init_phase,
         mix_phase_step, CodeDisc::CORR_OFFSET, code_init_phase, code_phase_step);
   }
 
@@ -103,7 +106,7 @@ public:
     while (!samples_out.empty()) {
       size_t gen_size =
           std::min(samples_out.size(), size_t((Code::CHIP_COUNT + 1) / code_phase_step));
-      dsp::modulate<cp_f32, Code::MODULATION>(gen_size, Code::CHIPS[_prn].data(),
+      dsp::modulate<cp_f32, Code::MODULATION>(gen_size, chips.data(),
                                               samples_out.data(), mix_phase, mix_phase_step,
                                               code_init_phase, code_phase_step);
 
@@ -131,5 +134,6 @@ public:
 
 protected:
   u16 _prn;
+  std::vector<u8> chips;
 };
 }  // namespace weaver

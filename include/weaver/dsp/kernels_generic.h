@@ -21,12 +21,10 @@ void mmcorr_gen(size_t n,
 
     for (size_t replica_i = 0; replica_i < NCorrelations; replica_i++) {
       size_t chip_idx = static_cast<size_t>(code_init_phase + i * code_phase_step + replica_i * corr_offset);
-      size_t chip_base = chip_idx / 4, chip_off = chip_idx % 4;
-      uint8_t chip = (chips[chip_base] << (2 * chip_off)) >> 6;
+      size_t chip_base = chip_idx / 8, chip_off = chip_idx % 8;
+      uint8_t chip = (chips[chip_base] << chip_off) >> 7;
 
-      f32 out_real = (chip & 0x2) ? -mixed.real() : mixed.real();
-      f32 out_imag = (chip & 0x1) ? -mixed.imag() : mixed.imag();
-      out[replica_i] += cp_f32{out_real, out_imag};
+      out[replica_i] += ((chip & 0x1) ? -mixed : mixed);
     }
 
     mix_cp *= mix_step_cp;
@@ -45,11 +43,10 @@ void modulate_gen(size_t n,
   cp_f32 mix_step_cp = std::polar(1.0f, mix_phase_step);
   for (size_t i = 0; i < n; i++) {
     size_t chip_idx = static_cast<size_t>(code_init_phase + i * code_phase_step);
-    size_t chip_base = chip_idx / 4, chip_off = chip_idx % 4;
-    uint8_t chip = (chips[chip_base] << (2 * chip_off)) >> 6;
+    size_t chip_base = chip_idx / 8, chip_off = chip_idx % 8;
+    uint8_t chip = (chips[chip_base] << chip_off) >> 7;
 
-    cp_f32 out_float = {mix_cp.real() * ((chip & 0x2) ? -1.0f : 1.0f),
-                        mix_cp.imag() * ((chip & 0x1) ? -1.0f : 1.0f)};
+    cp_f32 out_float = (chip & 0x1) ? -mix_cp : mix_cp;
     if constexpr (std::is_same_v<T, cp_f32>) {
       out[i] = out_float;
     } else if constexpr (std::is_same_v<T, cp_i16>) {

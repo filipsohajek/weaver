@@ -18,7 +18,7 @@ TEST_CASE("AVX2 & generic multicorrelation is correct", "[kernels]") {
   std::complex<short>* samples = reinterpret_cast<std::complex<short>*>(
       std::aligned_alloc(32, sizeof(std::complex<short>) * n));
   for (size_t i = 0; i < n; i++) {
-    chips[i] = 0x99;
+    chips[i] = 0xaa;
     samples[i] = {unif(mt), unif(mt)};
   }
 
@@ -47,8 +47,7 @@ TEST_CASE("AVX2 & generic multicorrelation is correct", "[kernels]") {
 
     for (size_t replica_i = 0; replica_i < n_corrs; replica_i++) {
       size_t chip_idx = code_init_phase + i * code_phase_step + replica_i * corr_offset;
-      std::complex<float> out { in.real() * ((chip_idx%2) ? 1.0f : -1.0f), in.imag() * ((chip_idx%2) ? -1.0f : 1.0f) };
-      out_exact[replica_i] += out;
+      out_exact[replica_i] += (chip_idx % 2) ? in : -in;
     }
   }
 
@@ -71,7 +70,7 @@ TEST_CASE("AVX2 & generic modulation is correct", "[kernels][mod]") {
   std::uniform_int_distribution<short> unif;
   std::uniform_int_distribution<unsigned char> unif_c;
   std::vector<unsigned char> chips(n);
-  std::fill(chips.begin(), chips.end(), 0x99);
+  std::fill(chips.begin(), chips.end(), 0xaa);
   std::complex<float>* samples_avx2 = reinterpret_cast<std::complex<float>*>(
       std::aligned_alloc(32, sizeof(std::complex<float>) * n));
   std::complex<float>* samples_generic = reinterpret_cast<std::complex<float>*>(
@@ -95,9 +94,9 @@ TEST_CASE("AVX2 & generic modulation is correct", "[kernels][mod]") {
 
   for (size_t i = 0; i < n; i++) {
     double mix_phase = mix_init_phase + i * mix_phase_step;
-    std::complex<float> in = weaver::cp_cast<float>(std::polar(1.0, mix_phase));
     size_t chip_idx = code_init_phase + i * code_phase_step;
-    std::complex<float> out { in.real() * ((chip_idx%2) ? 1.0f : -1.0f), in.imag() * ((chip_idx%2) ? -1.0f : 1.0f) };
+    std::complex<float> in = weaver::cp_cast<float>(std::polar(1.0, mix_phase));
+    std::complex<float> out = (chip_idx % 2) ? in : -in; 
     err_avx2 += std::pow(std::abs(out - samples_avx2[i]), 2);
     err_gen += std::pow(std::abs(out - samples_generic[i]), 2);
   }

@@ -10,7 +10,7 @@ concept IsCode = requires(T t) {
   { T::CHIP_RATE_HZ } -> std::convertible_to<f32>;
   { T::CHIP_COUNT } -> std::convertible_to<u32>;
   { T::PRN_COUNT } -> std::convertible_to<u16>;
-  { T::CHIPS[size_t()] } -> std::convertible_to<std::array<u8, ((2*T::CHIP_COUNT + 12 + 3) / 4)>>;
+  { T::gen_chips(u16(), std::span<u8>()) };
 
   { T::MODULATION } -> std::convertible_to<Modulation>;
 };

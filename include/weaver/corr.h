@@ -25,10 +25,7 @@ public:
     samples_rem -= proc_n;
     
     code_phase += proc_n/(sample_rate_hz * signal->code_period_s());
-    if (code_phase >= 1.0)
-      code_phase -= 1.0;
-    carr_phase -= (carr_freq * proc_n)/sample_rate_hz;
-    carr_phase = std::fmod(carr_phase, 1.0);
+    carr_phase += (carr_freq * proc_n)/sample_rate_hz;
 
     return res_span;
   }
@@ -39,6 +36,7 @@ public:
 
     cp_f32 prompt;     
     f64 disc_out = signal->discriminate(corr_res, prompt);
+    prompt /= int_time_s() * sample_rate_hz;
     f64 carr_disc_out = disc_carrier(prompt);
     Result res {
       .code_disc_out = disc_out,
@@ -61,10 +59,15 @@ public:
     corr_res.resize(signal->n_replicas());
     std::ranges::fill(corr_res, 0);
     samples_rem = int_time_s() * sample_rate_hz;
+    code_phase = 0.0;
   }
 
   f64 int_time_s() const {
     return int_time_codeper * signal->code_period_s();
+  }
+
+  f64 carrier_disc_var(f64 cn0) const {
+    return (1 / (2 * cn0 * int_time_s())) * (1 + 1 / (2 * int_time_s() * cn0)) / std::pow(2 * std::numbers::pi_v<f32>, 2);
   }
 private:
   f64 disc_carrier(cp_f32 prompt) const {

@@ -36,12 +36,13 @@ def gen_ca(psel_1, psel_2):
          g1 = ((g1 << 1) & reg_mask) | ((g1 & g1_mask).bit_count() & 0x1)
          g2 = ((g2 << 1) & reg_mask) | ((g2 & g2_mask).bit_count() & 0x1)
 
-prn = int(sys.argv[1]) - 1
-chips = np.array(list(gen_ca(*cpsels[prn])))
-doubled_chips = np.repeat(chips, 2)
-repeated_chips = np.tile(doubled_chips, 2)
-wrapped_chips = np.concatenate((repeated_chips, repeated_chips[:24]))
-packed_chips = np.packbits(wrapped_chips)
-print(chips[-16:])
-print(len(packed_chips))
-print(", ".join(map(hex, packed_chips)))
+if __name__ == "__main__":
+    prn = int(sys.argv[1]) - 1
+    chips = np.array(list(gen_ca(*cpsels[prn])))
+    doubled_chips = np.repeat(chips, 2)
+    repeated_chips = np.tile(doubled_chips, 2)
+    wrapped_chips = np.concatenate((repeated_chips, repeated_chips[:24]))
+    packed_chips = np.packbits(wrapped_chips)
+    print(chips[-16:])
+    print(len(packed_chips))
+    print(", ".join(map(hex, packed_chips)))

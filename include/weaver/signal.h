@@ -48,13 +48,14 @@ struct NELPCodeDiscriminator {
   static const constexpr f64 CORR_OFFSET = CorrOffset;
 
   static f32 disc_code(std::span<cp_f32> corr_res) {
-    f64 e_sq = std::pow(corr_res[0].real(), 2) + std::pow(corr_res[0].imag(), 2);
-    f64 l_sq = std::pow(corr_res[2].real(), 2) + std::pow(corr_res[2].imag(), 2);
-    return 0.5 * (e_sq - l_sq) / (e_sq + l_sq);
+    f64 e = std::abs(corr_res[0]);
+    f64 l = std::abs(corr_res[2]);
+    return 0.5 * (e - l) / (e + l);
   }
 
   static f64 disc_error_var(f64 cn0, f64 int_time_s) {
-    return ((CORR_OFFSET / (4 * cn0)) * (1 + 2 / ((2 - CORR_OFFSET) * int_time_s * cn0)));
+    f64 d = 2 * CORR_OFFSET;
+    return ((d / (4 * cn0 * int_time_s)) * (1 + 2 / ((2 - CORR_OFFSET) * int_time_s * cn0)));
   }
 };
 
@@ -83,11 +84,11 @@ public:
 
   f32 discriminate(std::span<cp_f32> corr_in, cp_f32& prompt) const override {
     prompt = corr_in[CodeDisc::SPREAD];
-    return CodeDisc::disc_code(corr_in);
+    return CodeDisc::disc_code(corr_in) / Code::CHIP_COUNT;
   }
 
   f64 disc_error_var(f64 cn0, f64 int_time_s) const override {
-    return CodeDisc::disc_error_var(cn0, int_time_s);
+    return CodeDisc::disc_error_var(cn0, int_time_s) / (Code::CHIP_COUNT * Code::CHIP_COUNT);
   }
 
   void generate(std::span<cp_f32> samples_out,

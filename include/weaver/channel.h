@@ -36,8 +36,7 @@ public:
     TRACK_INIT,
   };
 
-  explicit Channel(std::shared_ptr<Signal> signal, Parameters params) : params(params), signal(signal), acq(signal), corr(signal, params.sample_rate_hz), trace_file("out_trace"), cn0_m2(params.cn0_est_prompts), cn0_m4(params.cn0_est_prompts) {
-    acq.reset(params.acq_params);
+  explicit Channel(std::shared_ptr<Signal> signal, Parameters params) : cn0_m2(params.cn0_est_prompts), cn0_m4(params.cn0_est_prompts), trace_file("out_trace"), params(params), signal(signal), acq(signal, params.acq_params), corr(signal, params.sample_rate_hz) {
     state = State::ACQUISITION;
   }
 
@@ -50,18 +49,14 @@ public:
           samples = acq.process(samples);
           if (!acq.finished())
             continue;
-          AcqEngine::Candidate first_cand = acq.acq_candidates().back();
-          std::cout << std::format("acquisition: top candidate: code_offset={}, doppler_freq={}, val={}, p={}\n", first_cand.code_offset, first_cand.doppler_freq, first_cand.val, first_cand.p_val());
-          if (first_cand.p_val() >= params.acq_p_thresh) {
+          AcqEngine::Result result = acq.result().value();
+          std::cout << std::format("acquisition: code_offset={}, doppler_freq={}, p={}\n", result.code_offset, result.doppler_freq, result.p);
+          if (result.p >= params.acq_p_thresh) {
             std::cout << "acquisition failed, failing channel\n";
-            std::cout << "Considered candidates:\n";
-            for (const auto& cand : acq.acq_candidates()) {
-              std::cout << std::format("code_offset={}, doppler_freq={}, val={}, chi2_dof={}, max_count={}, p={}\n", cand.code_offset, cand.doppler_freq, cand.val, cand.chi2_dof, cand.max_count, cand.p_val());
-            }
             state = State::FAILED;
             continue;
           }
-          setup_tracking(first_cand);
+          setup_tracking(result);
           state = State::TRACK_INIT;
           break;
         }
@@ -143,9 +138,9 @@ private:
     };
   }
 
-  void setup_tracking(AcqEngine::Candidate cand) {
-    corr.set_params(cand.code_offset, 0.0f, cand.doppler_freq);
-    trk_filter.state = Eigen::Vector<f64, 4> {cand.code_offset, 0.0f, cand.doppler_freq, 0};
+  void setup_tracking(AcqEngine::Result res) {
+    corr.set_params(res.code_offset, 0.0f, res.doppler_freq);
+    trk_filter.state = Eigen::Vector<f64, 4> {res.code_offset, 0.0f, res.doppler_freq, 0};
     trk_filter.state_cov = Eigen::DiagonalMatrix<f64, 4> {params.code_init_var, params.phase_init_var, params.freq_init_var, params.freq_rate_init_var};
     trk_filter.process_noise_cov = Eigen::DiagonalMatrix<f64, 4> {params.code_noise_var, params.phase_noise_var, params.freq_noise_var, params.freq_rate_noise_var};
     trk_filter.meas_noise_cov = Eigen::DiagonalMatrix<f64, 2> {params.init_code_disc_var, params.init_carrier_disc_var};

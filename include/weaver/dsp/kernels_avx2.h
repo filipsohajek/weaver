@@ -42,21 +42,21 @@ inline void mm256_print_cpps(__m256 in_cpps) {
   std::cout << "\n";
 }
 
-template<size_t NCorrelations, Modulation Modulation>
+template<size_t Spread, Modulation Modulation>
 void mmcorr_avx2(size_t n,
                  const cp_i16* samples,
                  const u8* __restrict__ chips,
                  cp_f32* __restrict__ out,
                  f32 mix_init_phase,
                  f32 mix_phase_step,
-                 f32 corr_offset,
+                 const f64* __restrict__ corr_offsets,
                  f64 code_init_phase,
                  f64 code_phase_step) {
   const uint8_t FRAC_BITS = 39;
 
   __m256 float_scale = _mm256_set1_ps(1.0f / 32768.0f);
-  array<__m256, NCorrelations> partial_sums;
-  for (size_t i = 0; i < NCorrelations; i++) {
+  array<__m256, 2*Spread + 1> partial_sums;
+  for (size_t i = 0; i < 2*Spread + 1; i++) {
     partial_sums[i] = _mm256_set1_ps(0.0f);
   }
 
@@ -72,8 +72,12 @@ void mmcorr_avx2(size_t n,
   f64 eps = 1 / frac_scale;
   uint64_t code_init_phase_int = static_cast<uint64_t>((code_init_phase + eps) * frac_scale);
   uint64_t code_step_int = static_cast<uint64_t>((code_phase_step + eps) * frac_scale);
-  uint64_t corr_offset_int = static_cast<uint64_t>((corr_offset + eps) * frac_scale);
-  __m256i corr_phase_offset = _mm256_set1_epi64x(corr_offset_int);
+
+  array<__m256i, Spread> corr_phase_offsets;
+  for (size_t i = 0; i < Spread; i++) {
+    uint64_t corr_offset_int = static_cast<uint64_t>((corr_offsets[i] + eps) * frac_scale);
+    corr_phase_offsets[i] = _mm256_set1_epi64x(corr_offset_int);
+  }
   __m256i code_phase_vec = _mm256_set_epi64x(
       code_init_phase_int + 3 * code_step_int, code_init_phase_int + 2 * code_step_int,
       code_init_phase_int + code_step_int, code_init_phase_int);
@@ -109,7 +113,7 @@ void mmcorr_avx2(size_t n,
     __m256i code_phase_high = _mm256_sub_epi64(code_phase_vec, base_vec);
     code_phase_vec = _mm256_add_epi64(code_phase_vec, code_step_vec);
 
-    for (size_t j = 0; j < NCorrelations; j++) {
+    for (size_t j = 0, j_back = 2*Spread - 1; j < 2*Spread + 1; j++, j_back--) {
       __m256i code_phase_lo_rd = _mm256_srli_epi64(code_phase_low, FRAC_BITS);
       __m256i code_phase_hi_rd = _mm256_srli_epi64(code_phase_high, FRAC_BITS);
 
@@ -124,11 +128,12 @@ void mmcorr_avx2(size_t n,
       partial_sums[j] = _mm256_fmadd_ps(out_low_float, float_scale, partial_sums[j]);
       partial_sums[j] = _mm256_fmadd_ps(out_high_float, float_scale, partial_sums[j]);
 
-      code_phase_low = _mm256_add_epi64(code_phase_low, corr_phase_offset);
-      code_phase_high = _mm256_add_epi64(code_phase_high, corr_phase_offset);
+      size_t offset_idx = std::min(j, j_back);
+      code_phase_low = _mm256_add_epi64(code_phase_low, corr_phase_offsets[offset_idx]);
+      code_phase_high = _mm256_add_epi64(code_phase_high, corr_phase_offsets[offset_idx]);
     }
   }
-  for (size_t i = 0; i < NCorrelations; i++) {
+  for (size_t i = 0; i < 2*Spread + 1; i++) {
     out[i] += mm256_hsum_cpps(partial_sums[i]);
   }
 }

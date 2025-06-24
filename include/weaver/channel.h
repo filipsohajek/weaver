@@ -93,7 +93,7 @@ private:
 
   void update_filter(Correlator::Result corr_res) {
     f64 cn0 = this->cn0();
-    trk_filter.meas_noise_cov = Eigen::DiagonalMatrix<f64, 2> {signal->disc_error_var(cn0, corr.int_time_s()), corr.carrier_disc_var(cn0)};
+    trk_filter.meas_noise_cov = Eigen::DiagonalMatrix<f64, 2> {corr.disc_error_var(cn0), corr.carrier_disc_var(cn0)};
     trk_filter.update({corr_res.code_disc_out, -corr_res.carrier_disc_out});  
     trk_filter.state[0] = std::fmod(trk_filter.state[0], 1.0);
     trk_filter.state[1] = std::fmod(trk_filter.state[1], 1.0);

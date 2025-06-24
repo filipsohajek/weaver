@@ -2,14 +2,14 @@
 #include "weaver/dsp/code.h"
 #include "weaver/types.h"
 namespace weaver::dsp {
-template<size_t NCorrelations, Modulation Modulation>
+template<size_t Spread, Modulation Modulation>
 void mmcorr_gen(size_t n,
                 const cp_i16* samples,
                 const u8* __restrict__ chips,
                 cp_f32* __restrict__ out,
                 f32 mix_init_phase,
                 f32 mix_phase_step,
-                f32 corr_offset,
+                const f64* corr_offsets,
                 f64 code_init_phase,
                 f64 code_phase_step) {
   cp_f32 mix_cp = std::polar(1.0f, mix_init_phase);
@@ -19,12 +19,16 @@ void mmcorr_gen(size_t n,
     cp_f32 mixed = cp_cast<f32>(in) / 32767.0f;
     mixed *= mix_cp;
 
-    for (size_t replica_i = 0; replica_i < NCorrelations; replica_i++) {
-      size_t chip_idx = static_cast<size_t>(code_init_phase + i * code_phase_step + replica_i * corr_offset);
+    f64 phase_offset = 0;
+    for (size_t replica_i = 0, replica_i_back = 2*Spread - 1; replica_i < 2*Spread + 1; replica_i++, replica_i_back--) {
+      size_t chip_idx = static_cast<size_t>(code_init_phase + i * code_phase_step + phase_offset);
       size_t chip_base = chip_idx / 8, chip_off = chip_idx % 8;
       uint8_t chip = (chips[chip_base] << chip_off) >> 7;
 
       out[replica_i] += ((chip & 0x1) ? -mixed : mixed);
+
+      size_t offset_idx = std::min(replica_i, replica_i_back);
+      phase_offset += corr_offsets[offset_idx];
     }
 
     mix_cp *= mix_step_cp;

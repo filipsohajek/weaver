@@ -3,25 +3,25 @@
 #include "weaver/dsp/kernels_generic.h"
 
 namespace weaver::dsp {
-template<size_t NCorrelations, Modulation Modulation>
+template<size_t Spread, Modulation Modulation>
 void mmcorr(size_t n,
             const cp_i16* samples,
             const u8* chips,
             cp_f32* out,
             f32 mix_init_phase,
             f32 mix_phase_step,
-            f32 corr_offset,
+            const f64* corr_offsets,
             f64 code_init_phase,
             f64 code_phase_step) {
 #ifdef __AVX2__
   size_t n_avx2 = 8 * (n / 8);
-  mmcorr_avx2<NCorrelations, Modulation>(n_avx2, samples, chips, out, mix_init_phase, mix_phase_step,
-                                         corr_offset, code_init_phase, code_phase_step);
+  mmcorr_avx2<Spread, Modulation>(n_avx2, samples, chips, out, mix_init_phase, mix_phase_step,
+                                         corr_offsets, code_init_phase, code_phase_step);
   size_t rem_n = n % 8;
   if (rem_n) {
-    mmcorr_gen<NCorrelations, Modulation>(
+    mmcorr_gen<Spread, Modulation>(
         rem_n, samples + n_avx2, chips, out, mix_init_phase + n_avx2 * mix_phase_step,
-        mix_phase_step, corr_offset, code_init_phase + n_avx2 * code_phase_step,
+        mix_phase_step, corr_offsets, code_init_phase + n_avx2 * code_phase_step,
         code_phase_step);
   }
 #else

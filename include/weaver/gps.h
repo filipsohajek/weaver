@@ -53,7 +53,7 @@ struct GPSCACode {
   static void gen_chips(u16 prn, std::span<u8> out) {
     CAGenerator gen(prn);
 
-    u8 cur_word;
+    u8 cur_word = 0;
     for (size_t bit_i = 0; bit_i < 8 * out.size(); bit_i++, gen++) {
       if ((bit_i % CHIP_COUNT) == 0)
         gen = CAGenerator(prn);

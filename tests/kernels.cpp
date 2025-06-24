@@ -30,12 +30,12 @@ TEST_CASE("AVX2 & generic multicorrelation is correct", "[kernels]") {
   std::complex<float> out_avx2[n_corrs] {};
   BENCHMARK("mcorr_avx2 (n=65536)") {
     std::fill(out_avx2, out_avx2 + n_corrs, 0);
-    weaver::dsp::mmcorr_avx2<n_corrs, weaver::dsp::Modulation::BPSK>(n, samples, chips.data(), out_avx2, mix_init_phase, mix_phase_step, corr_offset, code_init_phase, code_phase_step);
+    weaver::dsp::mmcorr_avx2<1, weaver::dsp::Modulation::BPSK>(n, samples, chips.data(), out_avx2, mix_init_phase, mix_phase_step, &corr_offset, code_init_phase, code_phase_step);
   };
   std::complex<float> out_gen[n_corrs] {};
   BENCHMARK("mcorr_gen (n=65536)") {
    std::fill(out_gen, out_gen +n_corrs, 0);
-    weaver::dsp::mmcorr_gen<n_corrs, weaver::dsp::Modulation::BPSK>(n, samples, chips.data(), out_gen, mix_init_phase, mix_phase_step, corr_offset, code_init_phase, code_phase_step);
+    weaver::dsp::mmcorr_gen<1, weaver::dsp::Modulation::BPSK>(n, samples, chips.data(), out_gen, mix_init_phase, mix_phase_step, &corr_offset, code_init_phase, code_phase_step);
     return out_gen;
  };
 

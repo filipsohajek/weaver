@@ -1,5 +1,6 @@
 #pragma once
 
+#include <numeric>
 #include "weaver/dsp/code.h"
 #include "weaver/dsp/kernels.h"
 #include "weaver/types.h"
@@ -12,9 +13,8 @@ public:
                          f32 sample_rate,
                          f32 mix_phase,
                          f32 mix_frequency,
-                         f64 code_phase) const = 0;
-  virtual f32 discriminate(std::span<cp_f32> corr_in, cp_f32& prompt) const = 0;
-  virtual f64 disc_error_var(f64 cn0, f64 int_time_s) const = 0;
+                         f64 code_phase,
+                         std::span<const f64> code_offsets) const = 0;
 
   virtual void generate(std::span<cp_f32> samples_out,
                         f32 sample_rate,
@@ -27,7 +27,6 @@ public:
                         f32 mix_phase,
                         f32 mix_frequency,
                         f64 code_phase) const = 0;
-  virtual size_t n_replicas() const = 0;
   virtual f64 code_period_s() const = 0;
   virtual f64 carrier_freq() const = 0;
   virtual u16 prn() const = 0;
@@ -42,24 +41,7 @@ concept IsCodeDiscriminator = requires(T t) {
   { T::disc_error_var(f64(), f64()) } -> std::convertible_to<f64>;
 };
 
-template<f64 CorrOffset>
-struct NELPCodeDiscriminator {
-  static const constexpr size_t SPREAD = 1;
-  static const constexpr f64 CORR_OFFSET = CorrOffset;
-
-  static f32 disc_code(std::span<cp_f32> corr_res) {
-    f64 e = std::abs(corr_res[0]);
-    f64 l = std::abs(corr_res[2]);
-    return 0.5 * (e - l) / (e + l);
-  }
-
-  static f64 disc_error_var(f64 cn0, f64 int_time_s) {
-    f64 d = 2 * CORR_OFFSET;
-    return ((d / (4 * cn0 * int_time_s)) * (1 + 2 / ((2 - CORR_OFFSET) * int_time_s * cn0)));
-  }
-};
-
-template<dsp::IsCode Code, IsCodeDiscriminator CodeDisc>
+template<dsp::IsCode Code>
 class CodeSignal : public Signal {
 public:
   CodeSignal(u16 prn) : _prn(prn) {
@@ -72,26 +54,27 @@ public:
                  f32 sample_rate,
                  f32 mix_phase,
                  f32 mix_frequency,
-                 f64 code_phase) const override {
+                 f64 code_phase,
+                 std::span<const f64> code_offsets) const override {
     f32 mix_init_phase = 2.0f * std::numbers::pi * mix_phase;
     f32 mix_phase_step = -2.0f * std::numbers::pi * mix_frequency / sample_rate;
+
+    f64 code_offset_sum = std::accumulate(code_offsets.begin(), code_offsets.end(), 0.0) / Code::CHIP_COUNT;
     f64 code_init_phase = std::fmod(code_phase, 1.0) / Code::CHIP_COUNT;
-    code_init_phase -= CodeDisc::CORR_OFFSET * CodeDisc::SPREAD;
+    code_init_phase -= code_offset_sum;
     if (code_init_phase < 0)
       code_init_phase += Code::CHIP_COUNT;
+
     f64 code_phase_step = Code::CHIP_RATE_HZ / (sample_rate * Code::CHIP_COUNT);
-    dsp::mmcorr<2 * CodeDisc::SPREAD + 1, Code::MODULATION>(
-        samples_in.size(), samples_in.data(), chips.data(), out.data(), mix_init_phase,
-        mix_phase_step, CodeDisc::CORR_OFFSET, code_init_phase, code_phase_step);
-  }
-
-  f32 discriminate(std::span<cp_f32> corr_in, cp_f32& prompt) const override {
-    prompt = corr_in[CodeDisc::SPREAD];
-    return CodeDisc::disc_code(corr_in) / Code::CHIP_COUNT;
-  }
-
-  f64 disc_error_var(f64 cn0, f64 int_time_s) const override {
-    return CodeDisc::disc_error_var(cn0, int_time_s) / (Code::CHIP_COUNT * Code::CHIP_COUNT);
+    
+    if (code_offsets.size() == 1)
+      dsp::mmcorr<1, Code::MODULATION>(
+          samples_in.size(), samples_in.data(), chips.data(), out.data(), mix_init_phase,
+          mix_phase_step, code_offsets.data(), code_init_phase, code_phase_step);
+    else if (code_offsets.size() == 2)
+      dsp::mmcorr<2, Code::MODULATION>(
+          samples_in.size(), samples_in.data(), chips.data(), out.data(), mix_init_phase,
+          mix_phase_step, code_offsets.data(), code_init_phase, code_phase_step);
   }
 
   void generate(std::span<cp_f32> samples_out,
@@ -125,8 +108,6 @@ public:
     generate(samples_out, sample_rate, mix_phase, mix_frequency, code_phase,
              Code::CHIP_RATE_HZ / Code::CHIP_COUNT);
   }
-
-  size_t n_replicas() const override { return 2 * CodeDisc::SPREAD + 1; }
 
   f64 code_period_s() const override { return f64(Code::CHIP_COUNT) / f64(Code::CHIP_RATE_HZ); }
 

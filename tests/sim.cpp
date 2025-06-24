@@ -7,8 +7,8 @@
 #include "weaver/channel.h"
 #include "weaver/gps.h"
 
-struct GPSL1Signal : public weaver::CodeSignal<weaver::GPSCACode, weaver::NELPCodeDiscriminator<0.5>> {
-  using weaver::CodeSignal<weaver::GPSCACode, weaver::NELPCodeDiscriminator<0.5>>::CodeSignal;
+struct GPSL1Signal : public weaver::CodeSignal<weaver::GPSCACode> {
+  using weaver::CodeSignal<weaver::GPSCACode>::CodeSignal;
   weaver::f64 carrier_freq() const override { return 1575.42e6; }
 };
 

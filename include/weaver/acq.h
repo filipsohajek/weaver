@@ -37,8 +37,6 @@ public:
   AcqEngine(std::shared_ptr<Signal> signal) : weaver::AcqEngine(signal, Parameters()) {}
 
   void reset() {
-    this->params = params;
-
     acq_grid.setZero();
 
     auto& replica = scratch;

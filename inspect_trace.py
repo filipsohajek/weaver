@@ -5,13 +5,11 @@ trace_type = np.dtype([
     ("prompt", np.complex64),
     ("cn0", np.float64),
     ("code_disc", np.float64),
-    ("carrier_disc", np.float64),
-    ("code_offset", np.float64),
+    ("carr_disc", np.float64),
+    ("code_phase", np.float64),
     ("carr_phase", np.float64),
-    ("carr_freq", np.float64),
-    ("carr_freq_rate", np.float64),
-    ("state_cov", (np.float64, (4, 4))),
-    ("meas_noise_cov", (np.float64, (2, 2))),
+    ("carr_freq", np.float32),
+    ("code_freq", np.float64),
 ])
 
 trace = np.fromfile("out_trace", dtype=trace_type)

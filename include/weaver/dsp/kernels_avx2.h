@@ -84,7 +84,7 @@ void mmcorr_avx2(size_t n,
   __m256i code_step_vec = _mm256_set1_epi64x(4 * code_step_int);
 
   __m256 sign_mask = std::bit_cast<__m256>(_mm256_set1_epi32(0x80000000));
-  __m128i base_mask = _mm_set1_epi64x(0xffffffffffffffff << (FRAC_BITS + 2));
+  __m128i base_mask = _mm_set1_epi64x(0xffffffffffffffff << (FRAC_BITS + 3));
 
   for (size_t i = 0; i < n; i += sizeof(__m256i) / sizeof(std::complex<short>)) {
     __m256i in = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(samples + i));
@@ -128,7 +128,7 @@ void mmcorr_avx2(size_t n,
       partial_sums[j] = _mm256_fmadd_ps(out_low_float, float_scale, partial_sums[j]);
       partial_sums[j] = _mm256_fmadd_ps(out_high_float, float_scale, partial_sums[j]);
 
-      size_t offset_idx = std::min(j, j_back);
+      size_t offset_idx = std::min(std::min(j, j_back), Spread - 1); // TODO
       code_phase_low = _mm256_add_epi64(code_phase_low, corr_phase_offsets[offset_idx]);
       code_phase_high = _mm256_add_epi64(code_phase_high, corr_phase_offsets[offset_idx]);
     }
@@ -167,7 +167,7 @@ void modulate_avx2(size_t n,
   __m256i code_step_vec = _mm256_set1_epi64x(4 * code_step_int);
 
   __m256 sign_mask = std::bit_cast<__m256>(_mm256_set1_epi32(0x80000000));
-  __m128i base_mask = _mm_set1_epi64x(0xffffffffffffffff << (FRAC_BITS + 2));
+  __m128i base_mask = _mm_set1_epi64x(0xffffffffffffffff << (FRAC_BITS + 3));
 
   for (size_t i = 0; i < n; i += sizeof(__m256i) / sizeof(std::complex<short>)) {
     __m256 in_low_float = cur_vec;

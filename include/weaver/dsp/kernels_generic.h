@@ -27,7 +27,7 @@ void mmcorr_gen(size_t n,
 
       out[replica_i] += ((chip & 0x1) ? -mixed : mixed);
 
-      size_t offset_idx = std::min(replica_i, replica_i_back);
+      size_t offset_idx = std::min(std::min(replica_i, replica_i_back), Spread - 1); // TODO
       phase_offset += corr_offsets[offset_idx];
     }
 

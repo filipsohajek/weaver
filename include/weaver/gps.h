@@ -1,5 +1,6 @@
 #pragma once
 
+#include <format>
 #include "weaver/dsp/code.h"
 #include "weaver/types.h"
 namespace weaver {
@@ -23,7 +24,7 @@ struct GPSCACode {
     static const u16 G2_INIT = 0b1111111111;
 
     CAGenerator(u16 prn) {
-      auto [psel_1, psel_2] = CA_CPSELS[prn];
+      auto [psel_1, psel_2] = CA_CPSELS[prn - 1];
       psel_mask = (1 << psel_1) | (1 << psel_2);
       g1 = G1_INIT;
       g2 = G2_INIT;
@@ -31,12 +32,12 @@ struct GPSCACode {
 
     bool operator*() const {
       bool g2i = __builtin_popcount(g2 & psel_mask) & 0x1;
-      return g2i ^ (g1 >> 9);
+      return g2i ^ (g1 >> 9) ^ 0x1;
     }
 
     CAGenerator& operator++() {
       g1 = ((g1 << 1) & REG_MASK) | (__builtin_popcount(g1 & G1_MASK) & 0x1);
-      g2 = ((g1 << 1) & REG_MASK) | (__builtin_popcount(g2 & G2_MASK) & 0x1);
+      g2 = ((g2 << 1) & REG_MASK) | (__builtin_popcount(g2 & G2_MASK) & 0x1);
       return *this;
     }
 
@@ -54,11 +55,11 @@ struct GPSCACode {
     CAGenerator gen(prn);
 
     u8 cur_word = 0;
-    for (size_t bit_i = 0; bit_i < 8 * out.size(); bit_i++, gen++) {
+    for (size_t bit_i = 0; bit_i < 8 * (out.size() + 1); bit_i++, gen++) {
       if ((bit_i % CHIP_COUNT) == 0)
         gen = CAGenerator(prn);
       if (((bit_i % 8) == 0) && (bit_i != 0)) {
-        out[bit_i / 8] = cur_word;
+        out[(bit_i / 8) - 1] = cur_word;
         cur_word = 0;
       }
       cur_word <<= 1;

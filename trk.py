@@ -13,6 +13,7 @@ arg_parser.add_argument("--prn", type=int)
 arg_parser.add_argument("--code_offset", type=float)
 arg_parser.add_argument("--loop_type", type=str, choices=("kalman", "pll",), default="kalman")
 arg_parser.add_argument("--doppler", type=float)
+arg_parser.add_argument("--skip", type=int, default=0)
 arg_parser.add_argument("in_file", type=str)
 args = arg_parser.parse_args()
 
@@ -109,14 +110,14 @@ class PLLLoop:
 n_read_samples = int(args.duration * args.sample_rate)
 if args.format == "i16":
     print("reading i16")
-    samples = np.fromfile(args.in_file, dtype=np.int16, count=2*n_read_samples)
+    samples = np.fromfile(args.in_file, dtype=np.int16, count=2*n_read_samples, offset=4*args.skip)
     samples = (samples[::2] + 1j*samples[1::2]) / 32767.0
 elif args.format == "f32":
     print("reading f32")
-    samples = np.fromfile(args.in_file, dtype=np.complex64, count=n_read_samples)
+    samples = np.fromfile(args.in_file, dtype=np.complex64, count=n_read_samples, offset=8*args.skip)
 elif args.format == "f64":
     print("reading f64")
-    samples = np.fromfile(args.in_file, dtype=np.complex128, count=n_read_samples)
+    samples = np.fromfile(args.in_file, dtype=np.complex128, count=n_read_samples, offset=16*args.skip)
 
 n_int_samples = int(CODE_PERIOD * args.sample_rate)
 
@@ -170,6 +171,6 @@ while len(samples):
     carrier_phases[-1] += carr_phase_err
 
     print(f"t={t[-1]:.2f} s, code_phase={code_phases[-1]:.8f}, code_freq={code_freqs[-1]:.3f} carrier_freq={carrier_freqs[-1]:.1f}, carrier_phase={carrier_phases[-1]:.3f}, cn0={10*np.log10(cn0s[-1]):.1f}")
-    print(f"abs(prompt)={np.abs(prompts[-1]):.2f}, carrier_disc={carrier_discs[-1]:.5f}, carrier_freq_disc={carrier_freq_discs[-1]:.5f}, code_disc={code_discs[-1]:.5f}\n")
+    print(f"prompt={prompts[-1]:.2f}, abs(prompt)={np.abs(prompts[-1]):.2f}, carrier_disc={carrier_discs[-1]:.5f}, carrier_freq_disc={carrier_freq_discs[-1]:.5f}, code_disc={code_discs[-1]:.5f}\n")
 
 

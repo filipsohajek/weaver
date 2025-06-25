@@ -14,8 +14,6 @@ namespace weaver {
 class AcqEngine {
 public:
   struct Parameters {
-    f64 sample_rate_hz = 0;
-
     size_t n_coherent = 1;
     size_t n_noncoherent = 1;
 
@@ -31,16 +29,16 @@ public:
     f32 doppler_freq_std;
   };
 
-  AcqEngine(std::shared_ptr<Signal> signal, Parameters params) : params(params), signal(std::move(signal)), acq_grid(n_doppler_bins(), n_code_bins()), replica_fft(fft_len()), samples(fft_len()), scratch(fft_len()), scratch2(fft_len()) {
+  AcqEngine(std::shared_ptr<Signal> signal, f64 sample_rate_hz, Parameters params) : params(params), sample_rate_hz(sample_rate_hz), signal(std::move(signal)), acq_grid(n_doppler_bins(), n_code_bins()), replica_fft(fft_len()), samples(fft_len()), scratch(fft_len()), scratch2(fft_len()) {
     reset();
   }
-  AcqEngine(std::shared_ptr<Signal> signal) : weaver::AcqEngine(signal, Parameters()) {}
+  AcqEngine(std::shared_ptr<Signal> signal, f64 sample_rate_hz) : weaver::AcqEngine(signal, sample_rate_hz, Parameters()) {}
 
   void reset() {
     acq_grid.setZero();
 
     auto& replica = scratch;
-    signal->generate({replica.data(), fft_len()}, params.sample_rate_hz, 0, 0, 0);
+    signal->generate({replica.data(), fft_len()}, sample_rate_hz, 0, 0, 0);
     fft.fwd(replica_fft, replica);
 
     samples_rem = signal_len();
@@ -78,17 +76,17 @@ public:
 
 private:
   size_t n_code_bins() const {
-    return signal->code_period_s() * params.sample_rate_hz;
+    return signal->code_period_s() * sample_rate_hz;
   }
 
   size_t signal_len() const {
-    return params.n_coherent * signal->code_period_s() * params.sample_rate_hz;
+    return params.n_coherent * signal->code_period_s() * sample_rate_hz;
   }
 
   size_t fft_len() const { return 2 * signal_len(); }
 
   f64 doppler_step() const {
-    return params.doppler_step / (fft_len() / params.sample_rate_hz);
+    return params.doppler_step / (fft_len() / sample_rate_hz);
   }
 
   size_t n_doppler_bins() const {
@@ -149,6 +147,7 @@ private:
   }
 
   Parameters params;
+  f64 sample_rate_hz;
   std::shared_ptr<Signal> signal;
   Eigen::FFT<f32> fft;
 

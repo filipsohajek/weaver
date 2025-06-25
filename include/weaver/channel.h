@@ -45,7 +45,7 @@ public:
         trace_file("out_trace"),
         corr(signal, params.sample_rate_hz, params.corr_offsets),
         signal(signal),
-        acq(signal, params.acq_params),
+        acq(signal, params.sample_rate_hz, params.acq_params),
         params(std::move(params)) {
     state = State::ACQUISITION;
   }

@@ -19,8 +19,7 @@ TEST_CASE("simulation works", "[sim]") {
   std::vector<double> corr_offsets;
   corr_offsets.push_back(0.5);
   auto channel_params = weaver::Channel::Parameters{
-      .acq_params = weaver::AcqEngine::Parameters{.sample_rate_hz = sample_rate_hz,
-                                                  .n_coherent = 1,
+      .acq_params = weaver::AcqEngine::Parameters{.n_coherent = 1,
                                                   .n_noncoherent = 1,
                                                   .doppler_step = 1},
       .sample_rate_hz = sample_rate_hz,

@@ -11,6 +11,9 @@
 struct GPSL1Signal : public weaver::CodeSignal<weaver::GPSCACode> {
   using weaver::CodeSignal<weaver::GPSCACode>::CodeSignal;
   weaver::f64 carrier_freq() const override { return 1575.42e6; }
+  std::unique_ptr<weaver::NavDataDecoder> data_decoder() const override {
+    return std::make_unique<weaver::LNAVDataDecoder>();
+  }
 };
 
 TEST_CASE("simulation works", "[sim]") {

@@ -10,6 +10,10 @@ inline f64 chi2_cdf(f64 k, f64 x) {
   return Eigen::internal::scalar_igamma_op<f64>()(k/2, x/2);
 }
 
+inline f64 norm_cdf(f64 x) {
+  return 0.5 * (1 + std::erf(x / std::numbers::sqrt2));
+}
+
 template<std::ranges::range R>
 inline auto mean(R&& r) {
   auto sum = std::accumulate(std::ranges::begin(r), std::ranges::end(r), std::ranges::range_value_t<R>());

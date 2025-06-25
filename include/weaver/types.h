@@ -1,4 +1,5 @@
 #pragma once
+#include <Eigen/Core>
 #include <complex>
 #include <cstdint>
 #include <iostream>
@@ -6,7 +7,6 @@
 #include <optional>
 #include <span>
 #include <vector>
-#include <Eigen/Core>
 
 namespace weaver {
 using u8 = uint8_t;
@@ -82,6 +82,14 @@ std::ostream& operator<<(std::ostream& out, std::optional<T> const& opt) {
   else
     out << "[No value]";
   return out;
+}
+template<unsigned NBits>
+inline i64 sign_extend(u64 x) {
+  if (x & (1UL << (NBits - 1))) {
+    x |= ~((1UL << NBits) - 1);
+  }
+
+  return std::bit_cast<i64>(x);
 }
 
 }  // namespace weaver

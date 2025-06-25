@@ -5,6 +5,13 @@
 #include "weaver/dsp/kernels.h"
 #include "weaver/types.h"
 namespace weaver {
+class NavDataDecoder {
+public:
+  virtual ~NavDataDecoder() {};
+  virtual f64 symbol_period_s() const = 0;
+  virtual void process_symbol(cp_f32) = 0;
+};
+
 class Signal {
 public:
   virtual ~Signal() {};
@@ -32,16 +39,11 @@ public:
   virtual f64 code_period_s() const = 0;
   virtual f64 carrier_freq() const = 0;
   virtual u16 prn() const = 0;
+  virtual std::unique_ptr<NavDataDecoder> data_decoder() const {
+    return nullptr;
+  }
 };
 
-template<typename T>
-concept IsCodeDiscriminator = requires(T t) {
-  { T::SPREAD } -> std::convertible_to<size_t>;
-  { T::CORR_OFFSET } -> std::convertible_to<f32>;
-
-  { T::disc_code(std::span<cp_f32>()) } -> std::convertible_to<f32>;
-  { T::disc_error_var(f64(), f64()) } -> std::convertible_to<f64>;
-};
 
 template<dsp::IsCode Code>
 class CodeSignal : public Signal {

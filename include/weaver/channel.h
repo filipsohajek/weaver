@@ -33,6 +33,9 @@ public:
     f64 cn0_lock_thresh_db = 30;
     f64 phase_lock_thresh = 0.85;
 
+    size_t data_est_symbols = 300;
+    f64 data_est_p_thresh = 0.05;
+    
     CodeDiscriminator code_disc;
     CarrierDiscriminator carrier_disc;
   };
@@ -41,7 +44,8 @@ public:
     FAILED = 0,
     ACQUISITION = 1,
     TRACK_INIT = 2,
-    TRACK_LOCKED = 3
+    TRACK_LOCKED = 3,
+    DATA_LOCKED = 4
   };
 
   explicit Channel(std::shared_ptr<Signal> signal, Parameters params)
@@ -51,6 +55,7 @@ public:
         trace_file("out_trace"),
         corr(signal, params.sample_rate_hz, params.corr_offsets),
         signal(signal),
+        data_decoder(signal->data_decoder()),
         acq(signal, params.sample_rate_hz, params.acq_params),
         params(std::move(params)) {
     state = State::ACQUISITION;
@@ -86,6 +91,7 @@ public:
           }
           // fallthrough
         case State::TRACK_LOCKED:
+        case State::DATA_LOCKED:
           samples = process_track(samples);
           break;
       }
@@ -122,10 +128,13 @@ private:
     std::cout << std::format(
         "process_track: prompt.re={}, prompt.im={}, code_disc={}, carr_disc={}, cn0={}, lock_ind={}\n",
         prompt.real(), prompt.imag(), code_disc_out, carrier_disc_out, cn0_db, lock_ind);
+
     update_cn0(prompt);
-    params.filter->update_disc_statistics(code_disc_var(), carrier_disc_var());
+    update_data(prompt);
+    update_data_transitions(prompt);
     update_filter(code_disc_out, carrier_disc_out);
 
+    last_prompt = prompt;
     corr.reset();
 
     return res_samples;
@@ -140,13 +149,68 @@ private:
       state = State::FAILED;
   }
 
+  void update_data_transitions(cp_f32 prompt) {
+    size_t n_trans_bins = data_decoder->symbol_period_s() / signal->code_period_s();
+    if (data_decoder && (state >= State::TRACK_LOCKED)) {       
+      data_trans_bins.resize(n_trans_bins); 
+      bool is_trans = std::signbit(prompt.real() * last_prompt.real());
+      if (is_trans) {
+        data_trans_bins[data_prompt_offset] += 1;
+      }
+      data_est_n_prompts += 1;
+      
+      if (data_est_n_prompts == n_trans_bins * params.data_est_symbols) {
+        size_t n_est_prompts = n_trans_bins * params.data_est_symbols;
+        auto max_bin_it = std::ranges::max_element(data_trans_bins);
+        size_t data_trans_bin = std::distance(data_trans_bins.begin(), max_bin_it);
+
+        f64 h0_expected_counts = f64(n_est_prompts) / f64(params.data_est_symbols);
+        f64 counts_norm = (2 * (*max_bin_it) - h0_expected_counts) / std::sqrt(h0_expected_counts);
+        f64 p = 1 - std::pow(norm_cdf(counts_norm), n_trans_bins); 
+
+        std::cout << std::format("data transition estimation: bin_counts=[ ");
+        for (u32 bin_count : data_trans_bins) {
+          std::cout << bin_count << " "; 
+        }
+        std::cout << std::format("], est_trans_bin={}, counts_norm={}, h0_expected_counts={}, p={}\n", data_trans_bin, counts_norm, h0_expected_counts, p);
+
+        if (p < params.data_est_p_thresh) {
+          data_trans_offset = data_trans_bin;
+          data_prompt_acc = 0;
+          state = State::DATA_LOCKED;
+        } else {
+          state = State::FAILED;
+        }
+
+        std::ranges::fill(data_trans_bins, 0);
+        data_est_n_prompts = 0;
+      }
+    }
+
+    data_prompt_offset += 1;
+    if (data_prompt_offset == n_trans_bins)
+      data_prompt_offset = 0;
+  }
+
   void update_filter(f64 code_disc_out, f64 carrier_disc_out) {
+    params.filter->update_disc_statistics(code_disc_var(), carrier_disc_var());
     LoopFilter::Output filter_out = params.filter->update(code_disc_out, carrier_disc_out);
 
     corr.update_params(filter_out.carrier_freq.value_or(corr.carr_freq),
                        filter_out.code_freq.value_or(corr.code_freq),
                        filter_out.carr_phase_adj.value_or(0),
                        filter_out.code_phase_adj.value_or(0));
+  }
+
+  void update_data(cp_f32 prompt) {
+    if ((state != State::DATA_LOCKED) || !data_decoder)
+      return;
+
+    if (data_prompt_offset == data_trans_offset) {
+      data_decoder->process_symbol(data_prompt_acc);
+      data_prompt_acc = 0;
+    }
+    data_prompt_acc += prompt;
   }
 
   void update_cn0(cp_f32 prompt) {
@@ -269,6 +333,15 @@ private:
   State state;
   Correlator corr;
   std::shared_ptr<Signal> signal;
+  
+  size_t data_prompt_offset = 0;
+  size_t data_trans_offset;
+  std::unique_ptr<NavDataDecoder> data_decoder;
+  std::vector<u32> data_trans_bins;
+  size_t data_est_n_prompts = 0;
+  cp_f32 data_prompt_acc;
+  cp_f32 last_prompt;
+
   AcqEngine acq;
   Parameters params;
 };

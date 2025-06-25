@@ -10,6 +10,7 @@ struct LoopFilter {
     std::optional<f64> code_phase_adj;
     std::optional<f64> carr_phase_adj;
   };
+  virtual ~LoopFilter() {};
 
   virtual void init(const Signal*, const AcqEngine::Result&) = 0;
   [[nodiscard]] virtual Output update(f64 code_disc_out, f64 carr_disc_out) = 0;

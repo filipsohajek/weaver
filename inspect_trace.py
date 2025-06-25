@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 trace_type = np.dtype([
     ("prompt", np.complex64),
     ("cn0", np.float64),
+    ("lock_ind", np.float64),
     ("code_disc", np.float64),
     ("carr_disc", np.float64),
     ("code_phase", np.float64),

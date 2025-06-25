@@ -1,7 +1,6 @@
 #pragma once
 #include "weaver/acq.h"
 #include "weaver/corr.h"
-#include "weaver/kalman.h"
 #include "weaver/loop_filter.h"
 #include "weaver/signal.h"
 #include "weaver/types.h"
@@ -19,9 +18,16 @@ public:
     f64 sample_rate_hz;
     std::vector<f64> corr_offsets;
     f64 acq_p_thresh = 0.05;
+    std::unique_ptr<std::ostream> trace_stream = nullptr;
 
     std::unique_ptr<LoopFilter> filter;
     size_t cn0_est_prompts = 20;
+    f64 cn0_low_clamp = 1e2;
+    f64 cn0_decay = 0.8;
+    f64 cn0_init = 1e3;
+
+    f64 phase_lock_decay = 0.8;
+    size_t phase_lock_est_prompts = 20;
 
     CodeDiscriminator code_disc;
     CarrierDiscriminator carrier_disc;
@@ -34,7 +40,9 @@ public:
   };
 
   explicit Channel(std::shared_ptr<Signal> signal, Parameters params)
-      : trace_file("out_trace"),
+      : cur_cn0(params.cn0_init, params.cn0_decay),
+        phase_lock_ind(0, params.phase_lock_decay),
+        trace_file("out_trace"),
         corr(signal, params.sample_rate_hz, params.corr_offsets),
         signal(signal),
         acq(signal, params.acq_params),
@@ -82,19 +90,22 @@ private:
     f64 code_disc_out = -disc_code(corr_res);
 
     f64 cn0_db = 10 * std::log10(cn0());
-    trace_file.write(reinterpret_cast<char*>(&prompt), sizeof(cp_f32));
-    trace_file.write(reinterpret_cast<char*>(&cn0_db), sizeof(f64));
-    trace_file.write(reinterpret_cast<char*>(&code_disc_out), sizeof(f64));
-    trace_file.write(reinterpret_cast<char*>(&carrier_disc_out), sizeof(f64));
-    trace_file.write(reinterpret_cast<char*>(&corr.code_phase), sizeof(f64));
-    trace_file.write(reinterpret_cast<char*>(&corr.carr_phase), sizeof(f64));
-    trace_file.write(reinterpret_cast<char*>(&corr.carr_freq), sizeof(f32));
-    trace_file.write(reinterpret_cast<char*>(&corr.code_freq), sizeof(f64));
-    trace_file.flush();
+    f64 lock_ind = phase_lock_ind.cur_val; 
+    if (params.trace_stream.get()) {
+      params.trace_stream->write(reinterpret_cast<char*>(&prompt), sizeof(cp_f32));
+      params.trace_stream->write(reinterpret_cast<char*>(&cn0_db), sizeof(f64));
+      params.trace_stream->write(reinterpret_cast<char*>(&lock_ind), sizeof(f64));
+      params.trace_stream->write(reinterpret_cast<char*>(&code_disc_out), sizeof(f64));
+      params.trace_stream->write(reinterpret_cast<char*>(&carrier_disc_out), sizeof(f64));
+      params.trace_stream->write(reinterpret_cast<char*>(&corr.code_phase), sizeof(f64));
+      params.trace_stream->write(reinterpret_cast<char*>(&corr.carr_phase), sizeof(f64));
+      params.trace_stream->write(reinterpret_cast<char*>(&corr.carr_freq), sizeof(f32));
+      params.trace_stream->write(reinterpret_cast<char*>(&corr.code_freq), sizeof(f64));
+    }
 
     std::cout << std::format(
-        "process_track: prompt.re={}, prompt.im={}, code_disc={}, carr_disc={}, cn0={}\n",
-        prompt.real(), prompt.imag(), code_disc_out, carrier_disc_out, cn0_db);
+        "process_track: prompt.re={}, prompt.im={}, code_disc={}, carr_disc={}, cn0={}, lock_ind={}\n",
+        prompt.real(), prompt.imag(), code_disc_out, carrier_disc_out, cn0_db, lock_ind);
     update_cn0(prompt);
     params.filter->update_disc_statistics(code_disc_var(), carrier_disc_var());
     update_filter(code_disc_out, carrier_disc_out);
@@ -132,15 +143,29 @@ private:
 
       f64 pd = std::sqrt(2 * std::pow(m2, 2) - m4);
       if (std::isnan(pd)) {
-        cur_cn0 = 1e3;
+        cur_cn0.update(params.cn0_low_clamp);
         return;
       }
       f64 pn = m2 - pd;
-      cur_cn0 = (pd / pn) / corr.int_time_s();
+      cur_cn0.update((pd / pn) / corr.int_time_s());
+    }
+  
+    phase_lock_prompts.push_back(prompt);
+    if (phase_lock_prompts.size() > params.phase_lock_est_prompts)
+      phase_lock_prompts.pop_front();
+    phase_lock_n_rem -= 1;
+    if (phase_lock_n_rem == 0) {
+      phase_lock_n_rem = params.phase_lock_est_prompts;
+      cp_f32 prompt_sum = std::accumulate(phase_lock_prompts.begin(), phase_lock_prompts.end(), cp_f32());
+      f64 i_sq = std::pow(prompt_sum.real(), 2);
+      f64 q_sq = std::pow(prompt_sum.imag(), 2);
+      f64 lock_ind = (i_sq - q_sq) / (i_sq + q_sq);
+
+      phase_lock_ind.update(lock_ind);
     }
   }
 
-  f64 cn0() const { return cur_cn0; }
+  f64 cn0() const { return cur_cn0.cur_val; }
 
   void set_int_time(f64 int_time_codeper) {
     corr.reset(int_time_codeper);
@@ -152,6 +177,8 @@ private:
     params.filter->init(signal.get(), res);
     corr.update_params(res.doppler_freq, 1 / signal->code_period_s(), 0, res.code_offset);
     cn0_n_rem = params.cn0_est_prompts;
+    phase_lock_n_rem = params.phase_lock_est_prompts;
+    cur_cn0.update(params.cn0_init);
     set_int_time(1.0);
   }
 
@@ -200,7 +227,11 @@ private:
 
   std::deque<cp_f32> cn0_prompts;
   size_t cn0_n_rem;
-  f64 cur_cn0 = 1e3;
+  ExponentialSmoother<f64> cur_cn0;
+
+  ExponentialSmoother<f64> phase_lock_ind;
+  size_t phase_lock_n_rem;
+  std::deque<cp_f32> phase_lock_prompts;
 
   std::ofstream trace_file;
   State state;

@@ -1,5 +1,6 @@
 #pragma once
 #include <deque>
+
 #include "weaver/types.h"
 
 namespace weaver {
@@ -17,20 +18,26 @@ struct MovingAverage {
     return cur_avg();
   }
 
-  T cur_sum() const {
-    return sum;
-  }
+  T cur_sum() const { return sum; }
 
-  size_t cur_n() const {
-    return vals.size();
-  }
+  size_t cur_n() const { return vals.size(); }
 
-  T cur_avg() const {
-    return sum / T(vals.size());
-  }
+  T cur_avg() const { return sum / T(vals.size()); }
+
 private:
   size_t n;
   T sum;
   std::deque<T> vals;
 };
-}
+template<typename T>
+struct ExponentialSmoother {
+  explicit ExponentialSmoother(T init, f64 decay = 0) : cur_val(init), decay(decay) {}
+  T cur_val = 0;
+  f64 decay;
+
+  T update(T val) {
+    cur_val += (1 - decay) * (val - cur_val);
+    return cur_val;
+  }
+};
+}  // namespace weaver

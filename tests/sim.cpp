@@ -26,6 +26,7 @@ TEST_CASE("simulation works", "[sim]") {
       .sample_rate_hz = sample_rate_hz,
       .corr_offsets = std::move(corr_offsets),
       .acq_p_thresh = 0.05,
+      .trace_stream = std::make_unique<std::ofstream>("out_trace"),
       .filter = std::make_unique<weaver::KalmanLoopFilter>(weaver::KalmanLoopFilter::Parameters{}),
       .code_disc = weaver::Channel::CodeDiscriminator::EMLEnvelope,
       .carrier_disc = weaver::Channel::CarrierDiscriminator::ATan};

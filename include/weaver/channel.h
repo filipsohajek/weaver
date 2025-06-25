@@ -26,21 +26,27 @@ public:
     f64 cn0_decay = 0.8;
     f64 cn0_init = 1e3;
 
-    f64 phase_lock_decay = 0.8;
-    size_t phase_lock_est_prompts = 20;
+    f64 phase_lock_decay = 0.999;
+    size_t phase_lock_est_prompts = 50;
+
+    f64 pullin_time = 2.0;
+    f64 cn0_lock_thresh_db = 30;
+    f64 phase_lock_thresh = 0.85;
 
     CodeDiscriminator code_disc;
     CarrierDiscriminator carrier_disc;
   };
 
   enum class State {
-    FAILED,
-    ACQUISITION,
-    TRACK_INIT,
+    FAILED = 0,
+    ACQUISITION = 1,
+    TRACK_INIT = 2,
+    TRACK_LOCKED = 3
   };
 
   explicit Channel(std::shared_ptr<Signal> signal, Parameters params)
-      : cur_cn0(params.cn0_init, params.cn0_decay),
+      : elapsed_time(0),
+        cur_cn0(params.cn0_init, params.cn0_decay),
         phase_lock_ind(0, params.phase_lock_decay),
         trace_file("out_trace"),
         corr(signal, params.sample_rate_hz, params.corr_offsets),
@@ -52,29 +58,39 @@ public:
 
   void process_samples(span<cp_i16> samples) {
     while (!samples.empty()) {
+      std::cout << std::format("process_samples: state={}, samples.size()={}\n", i32(state), samples.size());
+      size_t init_sample_count = samples.size();
       switch (state) {
         case State::FAILED:
           return;
         case State::ACQUISITION: {
           samples = acq.process(samples);
           if (!acq.finished())
-            continue;
+            break;
           AcqEngine::Result result = acq.result().value();
           std::cout << std::format("acquisition: code_offset={}, doppler_freq={}, p={}\n",
                                    result.code_offset, result.doppler_freq, result.p);
           if (result.p >= params.acq_p_thresh) {
             std::cout << "acquisition failed, failing channel\n";
             state = State::FAILED;
-            continue;
+            break;
           }
           setup_tracking(result);
           state = State::TRACK_INIT;
           break;
         }
         case State::TRACK_INIT:
+          if (elapsed_time >= params.pullin_time) {
+            state = is_locked() ? State::TRACK_LOCKED : State::FAILED;
+            break;
+          }
+          // fallthrough
+        case State::TRACK_LOCKED:
           samples = process_track(samples);
-          continue;
+          break;
       }
+      size_t end_sample_count = samples.size();
+      elapsed_time += (init_sample_count - end_sample_count) / params.sample_rate_hz;
     }
   }
 
@@ -115,6 +131,15 @@ private:
     return res_samples;
   }
 
+  bool is_locked() const {
+    return (10*std::log10(cn0()) >= params.cn0_lock_thresh_db) && (phase_lock_ind.cur_val >= params.phase_lock_thresh);
+  }
+
+  void eval_lock() {
+    if (!is_locked() && (state != State::TRACK_INIT))
+      state = State::FAILED;
+  }
+
   void update_filter(f64 code_disc_out, f64 carrier_disc_out) {
     LoopFilter::Output filter_out = params.filter->update(code_disc_out, carrier_disc_out);
 
@@ -148,6 +173,7 @@ private:
       }
       f64 pn = m2 - pd;
       cur_cn0.update((pd / pn) / corr.int_time_s());
+      eval_lock();
     }
   
     phase_lock_prompts.push_back(prompt);
@@ -161,7 +187,11 @@ private:
       f64 q_sq = std::pow(prompt_sum.imag(), 2);
       f64 lock_ind = (i_sq - q_sq) / (i_sq + q_sq);
 
-      phase_lock_ind.update(lock_ind);
+      if (phase_lock_ind.cur_val == 0)
+        phase_lock_ind.cur_val = lock_ind;
+      else
+        phase_lock_ind.update(lock_ind);
+      eval_lock();
     }
   }
 
@@ -224,6 +254,8 @@ private:
         return nan("");
     }
   }
+
+  f64 elapsed_time;
 
   std::deque<cp_f32> cn0_prompts;
   size_t cn0_n_rem;

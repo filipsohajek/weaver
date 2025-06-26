@@ -1,11 +1,11 @@
 #pragma once
+#include <format>
 #include "weaver/types.h"
 #include "weaver/signal.h"
 
 namespace weaver {
 class Correlator {
 public:
-  static const constexpr f64 CODE_CORR_OFFSET = 0.5;
   struct Result {
     f64 code_disc_out;
     f64 carrier_disc_out;
@@ -46,13 +46,22 @@ public:
     this->code_phase = std::fmod(code_phase + code_phase_adj, 1.0);
   }
 
-  void reset(f64 int_time_codeper = -1) {
+  void reset(f64 int_time_codeper = -1, f64 max_align_codeper = 0.0) {
     if (int_time_codeper < 0)
       int_time_codeper = this->int_time_codeper;
-    this->int_time_codeper = int_time_codeper;
+
+    f64 align_time;
+    if (code_phase < 0.5)
+      align_time = -std::min(max_align_codeper, code_phase);
+    else
+      align_time = std::min(max_align_codeper, 1 - code_phase);
+    std::cout << std::format("correlator: code_phase={}, int_time_codeper={}, max_align_codeper={}, align_time={}, ", code_phase, int_time_codeper, max_align_codeper, align_time);
+
+    this->int_time_codeper = int_time_codeper + align_time;
+    std::cout << std::format("res_int_time_codeper={}\n", this->int_time_codeper);
     corr_res.resize(2 * corr_offsets.size() + 1);
     std::ranges::fill(corr_res, 0);
-    samples_rem = int_time_s() * sample_rate_hz;
+    samples_rem = target_n_samples();
   }
 
   f64 int_time_s() const {
@@ -63,11 +72,19 @@ public:
     return corr_offsets;
   }
 
+  f64 elapsed_time_s() const {
+    return (target_n_samples() - samples_rem) / sample_rate_hz;
+  }
+
   f64 code_phase = 0;
   f64 carr_phase = 0;
   f32 carr_freq = 0;
   f64 code_freq = 0;
 private:
+  f64 target_n_samples() const {
+    return int_time_codeper * (sample_rate_hz / code_freq);
+  }
+
   std::shared_ptr<Signal> signal;
   std::vector<f64> corr_offsets;
   f64 sample_rate_hz;

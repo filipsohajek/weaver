@@ -34,17 +34,31 @@ TEST_CASE("simulation works", "[sim]") {
       .carrier_disc = weaver::Channel::CarrierDiscriminator::ATan};
   weaver::Channel channel(std::make_shared<GPSL1Signal>(1), std::move(channel_params));
 
-  size_t n = 4000;
+  size_t n = 16536;
   weaver::aligned_vector<weaver::cp_f32> samples(n);
   weaver::aligned_vector<weaver::cp_i16> samples_i16(n);
   // std::ofstream out("out");
   std::ifstream in("/home/filip/dev/sw/weaver/2013_04_04_GNSS_SIGNAL_at_CTTC_SPAIN/2013_04_04_GNSS_SIGNAL_at_CTTC_SPAIN.dat");
-  while (!in.eof()) {
+
+  size_t meas_period = 100;
+  size_t meas_i = 0; while (!in.eof()) {
     // sim.generate(samples);
     // weaver::dsp::cvt_cpf32_cpi16(n, samples.data(), samples_i16.data());
     // out.write(reinterpret_cast<char*>(samples_i16.data()), n * sizeof(weaver::cp_i16));
     in.read(reinterpret_cast<char*>(samples_i16.data()), n * sizeof(weaver::cp_i16));
     size_t samples_read = in.gcount() / sizeof(weaver::cp_i16);
     channel.process_samples({samples_i16.data(), samples_read});
+    if ((meas_i % meas_period) == 0) {
+      auto tow_res = channel.tow();
+      if (!tow_res.has_value())
+        std::cout << "TOW: unknown\n";
+      else
+        std::cout << std::format("TOW: {}\n", tow_res.value().tow);
+
+      auto navmsg_queue = channel.message_queue();
+      if (navmsg_queue != nullptr)
+        std::cout << std::format("navmsg_queue: size={}\n", navmsg_queue->size());
+    }
+    meas_i++;
   }
 }

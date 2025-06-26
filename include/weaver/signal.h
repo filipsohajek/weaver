@@ -1,15 +1,22 @@
 #pragma once
 
 #include <numeric>
+#include <queue>
+#include <variant>
 #include "weaver/dsp/code.h"
 #include "weaver/dsp/kernels.h"
+#include "weaver/pvt.h"
 #include "weaver/types.h"
 namespace weaver {
+using NavMessage = std::variant<Ephemeris>;
 class NavDataDecoder {
 public:
   virtual ~NavDataDecoder() {};
   virtual f64 symbol_period_s() const = 0;
   virtual void process_symbol(cp_f32) = 0;
+
+  virtual std::optional<TimeOfWeek> tow() const = 0;
+  virtual std::queue<NavMessage>& message_queue() = 0;
 };
 
 class Signal {
@@ -49,7 +56,7 @@ template<dsp::IsCode Code>
 class CodeSignal : public Signal {
 public:
   CodeSignal(u16 prn) : _prn(prn) {
-    chips.resize((2 * Code::CHIP_COUNT + 12 + 3) / 8);
+    chips.resize((3 * Code::CHIP_COUNT + 12 + 3) / 8);
     Code::gen_chips(prn, chips);
   }
 

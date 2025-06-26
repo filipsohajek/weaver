@@ -102,6 +102,20 @@ struct LNAVDataDecoder : public NavDataDecoder {
     }
   }
 
+  std::optional<TimeOfWeek> tow() const override {
+    if (!has_sync || !sys_time.has_value())
+      return std::nullopt;
+
+    TimeOfWeek sys_time_out = {.sys = GNSSSystem::GPS, .tow = sys_time.value()};
+    sys_time_out += (32 * word_id + word_bit_count) * symbol_period_s();
+
+    return sys_time_out;
+  }
+
+  std::queue<NavMessage>& message_queue() override {
+    return nav_msgs;
+  }
+
 private:
   void process_word() {
     auto corr_word = check_word(cur_word);
@@ -137,6 +151,7 @@ private:
     word_id++;
     if (word_id == 10) {
       if (subframe_ecc_passed) {
+        sys_time = new_sys_time;
         process_subframe();
       }
       word_id = 0;
@@ -168,10 +183,11 @@ private:
     try_sync = false;
     has_sync = true;
 
-    f64 new_sys_time = static_cast<f64>((word >> 13).to_ulong() & 0x1ffff) * 6;
+    new_sys_time = static_cast<f64>((word >> 13).to_ulong() & 0x1ffff) * 6;
     subframe_id = static_cast<u16>(((word >> 8).to_ulong()) & 0x7);
-    std::cout << std::format("HOW: tow_count={}, alert={}, anti_spoof={}, subframe_id={}, zeros={}\n",
-                  new_sys_time, u32(word[12]), u32(word[11]), subframe_id, tail_zeros);
+    std::cout << std::format(
+        "HOW: tow_count={}, alert={}, anti_spoof={}, subframe_id={}, zeros={}\n", new_sys_time,
+        u32(word[12]), u32(word[11]), subframe_id, tail_zeros);
   }
 
   void process_subframe() {
@@ -188,88 +204,125 @@ private:
     }
   }
 
+  void check_ephemeris() {
+    if (((eph_issues[0] & 0xff) != eph_issues[1]) || (eph_issues[1] != eph_issues[2]))
+      return;
+    nav_msgs.emplace(ephemeris);
+    eph_issues[0] = -1;
+    eph_issues[1] = -1;
+    eph_issues[2] = -1;
+  }
+
   void process_sf1() {
-    u32 week_nr = (subframe_words[0] >> 14).to_ulong() & 0x3fff;
-    u32 issue = subframe_words[0].to_ulong() & 0x3;
-    issue <<= 8;
-    issue |= (subframe_words[5] >> 16).to_ulong() & 0xff;
-    f64 group_delay =
+    ephemeris.week_nr = (subframe_words[0] >> 14).to_ulong() & 0x3fff;
+    ephemeris.clock_params.issue = subframe_words[0].to_ulong() & 0x3;
+    ephemeris.clock_params.issue <<= 8;
+    ephemeris.clock_params.issue |= (subframe_words[5] >> 16).to_ulong() & 0xff;
+    ephemeris.clock_params.group_delay =
         std::bit_cast<i8>(static_cast<u8>(subframe_words[4].to_ulong() & 0xff)) * std::pow(2, -31);
 
-    f64 ref_sys_time = static_cast<f64>((subframe_words[5].to_ulong() & 0xffff) * 16);
-    f64 frequency_drift =
+    ephemeris.clock_params.ref_tow = {
+        .sys = GNSSSystem::GPS,
+        .tow = static_cast<f64>((subframe_words[5].to_ulong() & 0xffff) * 16)};
+    ephemeris.clock_params.frequency_drift =
         std::bit_cast<i8>(static_cast<u8>((subframe_words[6] >> 16).to_ulong() & 0xff)) *
         std::pow(2, -55);
-    f64 drift = std::bit_cast<i16>(static_cast<u16>(subframe_words[6].to_ulong() & 0xffff)) *
-                std::pow(2, -43);
-    f64 offset = static_cast<f64>(sign_extend<22>((subframe_words[7].to_ulong() >> 2) & 0x3fffff)) *
-                 std::pow(2, -31);
+    ephemeris.clock_params.drift =
+        std::bit_cast<i16>(static_cast<u16>(subframe_words[6].to_ulong() & 0xffff)) *
+        std::pow(2, -43);
+    ephemeris.clock_params.offset =
+        static_cast<f64>(sign_extend<22>((subframe_words[7].to_ulong() >> 2) & 0x3fffff)) *
+        std::pow(2, -31);
 
-    std::cout << std::format("LNAV subframe 1: week_nr={}, issue={}, group_delay={}, ref_sys_time={}, freq_drift={}, drift={}, offset={}\n", week_nr, issue, group_delay, ref_sys_time, frequency_drift, drift, offset);
+    eph_issues[0] = ephemeris.clock_params.issue;
+    check_ephemeris();
+    std::cout << std::format(
+        "LNAV subframe 1: week_nr={}, issue={}, group_delay={}, ref_sys_time={}, freq_drift={}, "
+        "drift={}, offset={}\n",
+        ephemeris.week_nr, ephemeris.clock_params.issue, ephemeris.clock_params.group_delay,
+        ephemeris.clock_params.ref_tow.tow, ephemeris.clock_params.frequency_drift,
+        ephemeris.clock_params.drift, ephemeris.clock_params.offset);
   }
 
   void process_sf2() {
     u32 M_0_u32 = static_cast<u32>(subframe_words[1].to_ulong() & 0xff) << 24;
     M_0_u32 |= static_cast<u32>(subframe_words[2].to_ulong() & 0xffffff);
-    f64 mean_anomaly = std::numbers::pi * std::bit_cast<i32>(M_0_u32) * std::pow(2, -31);
-    f64 mean_motion_diff =
+    ephemeris.mean_anomaly = std::numbers::pi * std::bit_cast<i32>(M_0_u32) * std::pow(2, -31);
+    ephemeris.mean_motion_diff =
         std::numbers::pi *
         std::bit_cast<i16>(static_cast<u16>((subframe_words[1] >> 8).to_ulong() & 0xffff)) *
         std::pow(2, -43);
     u32 e_u32 = (static_cast<u32>(subframe_words[3].to_ulong() & 0xff) << 24) |
                 static_cast<u32>(subframe_words[4].to_ulong() & 0xffffff);
-    f64 eccentricity = e_u32 * std::pow(2, -33);
+    ephemeris.eccentricity = e_u32 * std::pow(2, -33);
     u32 sqrt_A_u32 = (static_cast<u32>(subframe_words[5].to_ulong() & 0xff) << 24) |
                      static_cast<u32>(subframe_words[6].to_ulong() & 0xffffff);
-    f64 semmaj_axis_sqrt = sqrt_A_u32 * std::pow(2, -19);
-    f64 ref_sys_time = static_cast<f64>((subframe_words[7] >> 8).to_ulong() & 0xffff) * 16;
-    f64 orbit_r_sin_corr =
+    ephemeris.semmaj_axis_sqrt = sqrt_A_u32 * std::pow(2, -19);
+    ephemeris.ref_tow = {
+      .sys = GNSSSystem::GPS,
+      .tow = static_cast<f64>((subframe_words[7] >> 8).to_ulong() & 0xffff) * 16
+    };
+    ephemeris.orbit_r_sin_corr =
         std::bit_cast<i16>(static_cast<u16>(subframe_words[0].to_ulong() & 0xffff)) *
         std::pow(2, -5);
-    f64 arg_lat_sin_corr =
+    ephemeris.arg_lat_sin_corr =
         std::bit_cast<i16>(static_cast<u16>((subframe_words[5] >> 8).to_ulong() & 0xffff)) *
         std::pow(2, -29);
-    f64 arg_lat_cos_corr =
+    ephemeris.arg_lat_cos_corr =
         std::bit_cast<i16>(static_cast<u16>((subframe_words[3] >> 8).to_ulong() & 0xffff)) *
         std::pow(2, -29);
 
     u8 iode = (subframe_words[0] >> 16).to_ulong() & 0xff;
-    std::cout << std::format("LNAV subframe 2: mean_anomaly={}, mean_motion_diff={}, eccentricity={}, semmaj_axis_sqrt={}, ref_sys_time={}, orbit_r_sin_corr={}, arg_lat_sin_corr={}, arg_lat_sin_corr={}, iode={}\n", mean_anomaly, mean_motion_diff, eccentricity, semmaj_axis_sqrt, ref_sys_time, orbit_r_sin_corr, arg_lat_sin_corr, arg_lat_cos_corr, iode);
+    eph_issues[1] = iode;
+    check_ephemeris();
+    std::cout << std::format(
+        "LNAV subframe 2: mean_anomaly={}, mean_motion_diff={}, eccentricity={}, "
+        "semmaj_axis_sqrt={}, ref_sys_time={}, orbit_r_sin_corr={}, arg_lat_sin_corr={}, "
+        "arg_lat_sin_corr={}, iode={}\n",
+        ephemeris.mean_anomaly, ephemeris.mean_motion_diff, ephemeris.eccentricity, ephemeris.semmaj_axis_sqrt, ephemeris.ref_tow.tow,
+        ephemeris.orbit_r_sin_corr, ephemeris.arg_lat_sin_corr, ephemeris.arg_lat_cos_corr, iode);
   }
 
   void process_sf3() {
-    f64 inc_angle_cos_corr =
+    ephemeris.inc_angle_cos_corr =
         std::bit_cast<i16>(static_cast<u16>((subframe_words[0] >> 8).to_ulong() & 0xffff)) *
         std::pow(2, -29);
     u32 Omega_0_u32 = (subframe_words[0].to_ulong() & 0xff);
     Omega_0_u32 <<= 24;
     Omega_0_u32 |= subframe_words[1].to_ulong() & 0xffffff;
-    f64 asc_node_lon = std::numbers::pi * std::bit_cast<i32>(Omega_0_u32) * std::pow(2, -31);
-    f64 inc_angle_sin_corr =
+    ephemeris.asc_node_lon = std::numbers::pi * std::bit_cast<i32>(Omega_0_u32) * std::pow(2, -31);
+    ephemeris.inc_angle_sin_corr =
         std::bit_cast<i16>(static_cast<u16>((subframe_words[2] >> 8).to_ulong() & 0xffff)) *
         std::pow(2, -29);
     u32 i_0_u32 = subframe_words[2].to_ulong() & 0xff;
     i_0_u32 <<= 24;
     i_0_u32 |= subframe_words[3].to_ulong() & 0xffffff;
-    f64 inc_angle = std::numbers::pi * std::bit_cast<i32>(i_0_u32) * std::pow(2, -31);
-    f64 orbit_r_cos_corr =
+    ephemeris.inc_angle = std::numbers::pi * std::bit_cast<i32>(i_0_u32) * std::pow(2, -31);
+    ephemeris.orbit_r_cos_corr =
         std::bit_cast<i16>(static_cast<u16>((subframe_words[4] >> 8).to_ulong() & 0xffff)) *
         std::pow(2, -5);
 
     u32 omega_u32 = subframe_words[4].to_ulong() & 0xff;
     omega_u32 <<= 24;
     omega_u32 |= subframe_words[5].to_ulong() & 0xffffff;
-    f64 arg_perigee = std::numbers::pi * std::bit_cast<i32>(omega_u32) * std::pow(2, -31);
+    ephemeris.arg_perigee = std::numbers::pi * std::bit_cast<i32>(omega_u32) * std::pow(2, -31);
 
-    f64 right_asc_rate = std::numbers::pi *
+    ephemeris.right_asc_rate = std::numbers::pi *
                          static_cast<f64>(sign_extend<24>(subframe_words[6].to_ulong())) *
                          std::pow(2, -43);
-    f64 inc_angle_rate =
+    ephemeris.inc_angle_rate =
         std::numbers::pi *
         static_cast<f64>(sign_extend<14>((subframe_words[7].to_ulong() >> 2) & 0x3fff)) *
         std::pow(2, -43);
 
-    std::cout << std::format("LNAV subframe 3: inc_angle_cos_corr={}, asc_node_lon={}, inc_angle_sin_corr={}, inc_angle={}, orbit_r_cos_corr={}, arg_perigee={}, right_asc_rate={}, inc_angle_rate={}\n", inc_angle_cos_corr, asc_node_lon, inc_angle_sin_corr, inc_angle, orbit_r_cos_corr, arg_perigee, right_asc_rate, inc_angle_rate);
+    u8 iode = (subframe_words[7] >> 16).to_ulong() & 0xff;
+    eph_issues[2] = iode;
+    check_ephemeris();
+    std::cout << std::format(
+        "LNAV subframe 3: inc_angle_cos_corr={}, asc_node_lon={}, inc_angle_sin_corr={}, "
+        "inc_angle={}, orbit_r_cos_corr={}, arg_perigee={}, right_asc_rate={}, inc_angle_rate={}\n",
+        ephemeris.inc_angle_cos_corr, ephemeris.asc_node_lon, ephemeris.inc_angle_sin_corr, ephemeris.inc_angle, ephemeris.orbit_r_cos_corr,
+        ephemeris.arg_perigee, ephemeris.right_asc_rate, ephemeris.inc_angle_rate);
   }
 
   std::optional<std::bitset<32>> check_word(std::bitset<32> word) const {
@@ -306,6 +359,13 @@ private:
   u16 word_bit_count = 0;
   u16 subframe_id = 0;
   u16 word_id = 0;
+
+  std::array<i16, 3> eph_issues{-1};
+  Ephemeris ephemeris{.sys = GNSSSystem::GPS};
+  std::queue<NavMessage> nav_msgs;
+
+  std::optional<f64> sys_time = std::nullopt;
+  f64 new_sys_time;
 
   std::bitset<32> cur_word;  // |-prev word tail (2)-|------------cur word data
                              // (24)------------|---parity (6)---|

@@ -2,6 +2,7 @@
 #include "weaver/acq.h"
 #include "weaver/corr.h"
 #include "weaver/loop_filter.h"
+#include "weaver/pvt.h"
 #include "weaver/signal.h"
 #include "weaver/types.h"
 #include "weaver/util.h"
@@ -99,7 +100,26 @@ public:
       elapsed_time += (init_sample_count - end_sample_count) / params.sample_rate_hz;
     }
   }
+  
+  std::optional<TimeOfWeek> tow() const {
+    if ((state < State::DATA_LOCKED) || !data_decoder)
+      return std::nullopt;
+    
+    auto data_tow = data_decoder->tow();
+    if (!data_tow.has_value())
+      return std::nullopt;
+    TimeOfWeek res_tow = data_tow.value();
+    
+    res_tow += data_code_phase_acc * signal->code_period_s() + corr.elapsed_time_s();
+    return res_tow;
+  }
 
+  std::queue<NavMessage>* message_queue() const {
+    if ((state < State::DATA_LOCKED) || !data_decoder)
+      return nullptr;
+
+    return &data_decoder->message_queue();
+  }
 private:
   span<cp_i16> process_track(span<cp_i16> samples) {
     span<cp_i16> res_samples = corr.process_samples(samples);
@@ -135,7 +155,7 @@ private:
     update_filter(code_disc_out, carrier_disc_out);
 
     last_prompt = prompt;
-    corr.reset();
+    corr.reset(-1, 1.0);
 
     return res_samples;
   }
@@ -177,6 +197,7 @@ private:
         if (p < params.data_est_p_thresh) {
           data_trans_offset = data_trans_bin;
           data_prompt_acc = 0;
+          data_code_phase_acc = 0;
           state = State::DATA_LOCKED;
         } else {
           state = State::FAILED;
@@ -209,7 +230,10 @@ private:
     if (data_prompt_offset == data_trans_offset) {
       data_decoder->process_symbol(data_prompt_acc);
       data_prompt_acc = 0;
+      data_code_phase_acc = 0;
     }
+
+    data_code_phase_acc += corr.code_freq * corr.int_time_s();
     data_prompt_acc += prompt;
   }
 
@@ -340,6 +364,7 @@ private:
   std::vector<u32> data_trans_bins;
   size_t data_est_n_prompts = 0;
   cp_f32 data_prompt_acc;
+  f64 data_code_phase_acc;
   cp_f32 last_prompt;
 
   AcqEngine acq;

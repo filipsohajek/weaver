@@ -75,8 +75,8 @@ struct LNAVDataDecoder : public NavDataDecoder {
   f64 symbol_period_s() const override { return 0.020; }
 
   void process_symbol(cp_f32 symbol) override {
-    std::cout << std::format("lnav_decoder: symbol.real={}\n", symbol.real());
     bool in_bit = symbol.real() > 0;
+    //std::cout << std::format("lnav_decoder: symbol.real={}, bit={}\n", symbol.real(), u8(in_bit));
     cur_word <<= 1;
     if (flip_data) {
       in_bit = !in_bit;
@@ -84,10 +84,10 @@ struct LNAVDataDecoder : public NavDataDecoder {
     cur_word.set(0, in_bit);
 
     if (!has_sync && !try_sync) {
-      bool preamble_match =
-          ((cur_word.to_ulong() & 0x1ff) == 0x8b) || ((cur_word.to_ulong() & 0x1ff) == 0x174);
+      u32 preamble = cur_word.to_ulong() & 0x1ff;
+      bool preamble_match = (preamble == 0x8b) | (preamble == 0x174);
       if (preamble_match) {
-        std::cout << "found preamble, trying to sync\n";
+        std::cout << "found preamble, word=" << cur_word.to_string() << ", trying to sync\n";
         word_bit_count = 8;
         word_id = 0;
         try_sync = true;
@@ -107,7 +107,7 @@ struct LNAVDataDecoder : public NavDataDecoder {
       return std::nullopt;
 
     TimeOfWeek sys_time_out = {.sys = GNSSSystem::GPS, .tow = sys_time.value()};
-    sys_time_out += (32 * word_id + word_bit_count) * symbol_period_s();
+    sys_time_out += (30 * word_id + word_bit_count) * symbol_period_s();
 
     return sys_time_out;
   }
@@ -118,12 +118,13 @@ struct LNAVDataDecoder : public NavDataDecoder {
 
 private:
   void process_word() {
+    //std::cout << "processing word=" << cur_word.to_string() << "\n";
     auto corr_word = check_word(cur_word);
     ecc_passed = corr_word.has_value();
     if (!ecc_passed) {
       subframe_ecc_passed = false;
       if (!has_sync && try_sync) {
-        std::cout << "sync attempt failed";
+        std::cout << "sync attempt failed, word=" << cur_word.to_string() << "\n";
         try_sync = false;
       }
       return;
@@ -332,6 +333,7 @@ private:
       }
     }
 
+    bool ecc_failed = false;
     for (int i = 0; i < 6; i++) {
       std::bitset<32> mask_bitset(ECC_MASKS[i]);
       bool parity = ((mask_bitset & word).count() % 2 == 1);
@@ -340,10 +342,13 @@ private:
         std::cout << std::format("ECC fail @ {}, word={}, mask={}, masked={}, count={}\n", 25 + i,
                                  word.to_string(), mask_bitset.to_string(),
                                  (mask_bitset & word).to_string(), (mask_bitset & word).count());
-        return std::nullopt;
+        ecc_failed = true;
       }
     }
 
+    if (ecc_failed) {
+      return std::nullopt;
+    }
     return std::make_optional<std::bitset<32>>(word);
   }
 

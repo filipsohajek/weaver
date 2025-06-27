@@ -45,7 +45,7 @@ public:
   virtual size_t chip_count() const = 0;
   virtual f64 code_period_s() const = 0;
   virtual f64 carrier_freq() const = 0;
-  virtual u16 prn() const = 0;
+  virtual SignalID id() const = 0;
   virtual std::unique_ptr<NavDataDecoder> data_decoder() const {
     return nullptr;
   }
@@ -124,8 +124,6 @@ public:
   }
 
   f64 code_period_s() const override { return f64(Code::CHIP_COUNT) / f64(Code::CHIP_RATE_HZ); }
-
-  u16 prn() const override { return _prn; }
 
 protected:
   u16 _prn;

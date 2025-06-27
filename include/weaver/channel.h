@@ -64,7 +64,7 @@ public:
 
   void process_samples(span<cp_i16> samples) {
     while (!samples.empty()) {
-      std::cout << std::format("process_samples: state={}, samples.size()={}\n", i32(state), samples.size());
+      //std::cout << std::format("process_samples: state={}, samples.size()={}\n", i32(state), samples.size());
       size_t init_sample_count = samples.size();
       switch (state) {
         case State::FAILED:
@@ -74,7 +74,7 @@ public:
           if (!acq.finished())
             break;
           AcqEngine::Result result = acq.result().value();
-          std::cout << std::format("acquisition: code_offset={}, doppler_freq={}, p={}\n",
+          std::cout << std::format("acquisition({}): code_offset={}, doppler_freq={}, p={}\n", signal->id().prn,
                                    result.code_offset, result.doppler_freq, result.p);
           if (result.p >= params.acq_p_thresh) {
             std::cout << "acquisition failed, failing channel\n";
@@ -114,11 +114,15 @@ public:
     return res_tow;
   }
 
-  std::queue<NavMessage>* message_queue() const {
+  std::queue<NavMessage>* message_queue() {
     if ((state < State::DATA_LOCKED) || !data_decoder)
       return nullptr;
 
     return &data_decoder->message_queue();
+  }
+
+  SignalID sid() const {
+    return signal->id();
   }
 private:
   span<cp_i16> process_track(span<cp_i16> samples) {
@@ -135,6 +139,7 @@ private:
     f64 lock_ind = phase_lock_ind.cur_val; 
     if (params.trace_stream.get()) {
       params.trace_stream->write(reinterpret_cast<char*>(&prompt), sizeof(cp_f32));
+      params.trace_stream->write(reinterpret_cast<char*>(&data_prompt_acc), sizeof(cp_f32));
       params.trace_stream->write(reinterpret_cast<char*>(&cn0_db), sizeof(f64));
       params.trace_stream->write(reinterpret_cast<char*>(&lock_ind), sizeof(f64));
       params.trace_stream->write(reinterpret_cast<char*>(&code_disc_out), sizeof(f64));
@@ -145,9 +150,10 @@ private:
       params.trace_stream->write(reinterpret_cast<char*>(&corr.code_freq), sizeof(f64));
     }
 
-    std::cout << std::format(
-        "process_track: prompt.re={}, prompt.im={}, code_disc={}, carr_disc={}, cn0={}, lock_ind={}\n",
-        prompt.real(), prompt.imag(), code_disc_out, carrier_disc_out, cn0_db, lock_ind);
+//    std::cout << std::format(
+//        "process_track({}): prompt.re={}, prompt.im={}, code_disc={}, carr_disc={}, cn0={}, lock_ind={}\n",
+//      signal->id().prn,
+//        prompt.real(), prompt.imag(), code_disc_out, carrier_disc_out, cn0_db, lock_ind);
 
     update_cn0(prompt);
     update_data(prompt);
@@ -155,7 +161,7 @@ private:
     update_filter(code_disc_out, carrier_disc_out);
 
     last_prompt = prompt;
-    corr.reset(-1, 1.0);
+    corr.reset(1.0, 1.0);
 
     return res_samples;
   }
@@ -188,16 +194,18 @@ private:
         f64 counts_norm = (2 * (*max_bin_it) - h0_expected_counts) / std::sqrt(h0_expected_counts);
         f64 p = 1 - std::pow(norm_cdf(counts_norm), n_trans_bins); 
 
-        std::cout << std::format("data transition estimation: bin_counts=[ ");
+        std::cout << std::format("update_data_transitions({}): data transition estimation: bin_counts=[ ", signal->id().prn);
         for (u32 bin_count : data_trans_bins) {
           std::cout << bin_count << " "; 
         }
         std::cout << std::format("], est_trans_bin={}, counts_norm={}, h0_expected_counts={}, p={}\n", data_trans_bin, counts_norm, h0_expected_counts, p);
 
         if (p < params.data_est_p_thresh) {
+          if (data_trans_offset != data_trans_bin) {
+            data_prompt_acc = 0;
+            data_code_phase_acc = 0;
+          }
           data_trans_offset = data_trans_bin;
-          data_prompt_acc = 0;
-          data_code_phase_acc = 0;
           state = State::DATA_LOCKED;
         } else {
           state = State::FAILED;
@@ -254,13 +262,16 @@ private:
       m2 /= cn0_prompts.size();
       m4 /= cn0_prompts.size();
 
-      f64 pd = std::sqrt(2 * std::pow(m2, 2) - m4);
-      if (std::isnan(pd)) {
+
+      f64 ad = 2 * std::pow(m2, 2) - m4;
+      f64 pd = std::sqrt(ad);
+      f64 pn = m2 - pd;
+      f64 new_cn0 = (pd / pn) / corr.int_time_s();
+      if ((ad < 0) || (pn <= 0)) {
         cur_cn0.update(params.cn0_low_clamp);
         return;
       }
-      f64 pn = m2 - pd;
-      cur_cn0.update((pd / pn) / corr.int_time_s());
+      cur_cn0.update(new_cn0);
       eval_lock();
     }
   

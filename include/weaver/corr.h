@@ -14,6 +14,7 @@ public:
   };
 
   explicit Correlator(std::shared_ptr<Signal> signal, f64 sample_rate_hz, std::vector<f64> corr_offsets) : signal(std::move(signal)), corr_offsets(corr_offsets), sample_rate_hz(sample_rate_hz) {
+    update_params(0, 1/this->signal->code_period_s(), 0, 0);
     reset(1.0);
   }
 
@@ -55,7 +56,7 @@ public:
       align_time = -std::min(max_align_codeper, code_phase);
     else
       align_time = std::min(max_align_codeper, 1 - code_phase);
-    std::cout << std::format("correlator: code_phase={}, int_time_codeper={}, max_align_codeper={}, align_time={}, ", code_phase, int_time_codeper, max_align_codeper, align_time);
+    std::cout << std::format("correlator({}): code_phase={}, int_time_codeper={}, max_align_codeper={}, align_time={}, ", signal->id().prn, code_phase, int_time_codeper, max_align_codeper, align_time);
 
     this->int_time_codeper = int_time_codeper + align_time;
     std::cout << std::format("res_int_time_codeper={}\n", this->int_time_codeper);
@@ -65,7 +66,7 @@ public:
   }
 
   f64 int_time_s() const {
-    return int_time_codeper * signal->code_period_s();
+    return int_time_codeper/code_freq;
   }
 
   span<const f64> offsets() const {

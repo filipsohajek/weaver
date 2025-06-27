@@ -17,8 +17,8 @@ public:
     size_t n_coherent = 1;
     size_t n_noncoherent = 1;
 
-    f64 doppler_min = -7500;
-    f64 doppler_max = 7500;
+    f64 doppler_min = -10000;
+    f64 doppler_max = 10000;
     size_t doppler_step = 1;
   };
 

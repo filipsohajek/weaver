@@ -1,5 +1,8 @@
 #pragma once
 
+#include <format>
+
+#include "weaver/kalman.h"
 #include "weaver/systems.h"
 #include "weaver/types.h"
 
@@ -26,7 +29,7 @@ struct TimeOfWeek {
     return *this;
   }
 
-  TimeOfWeek operator+(f64 tow_inc) {
+  TimeOfWeek operator+(f64 tow_inc) const {
     TimeOfWeek new_time = *this;
     new_time += tow_inc;
     return new_time;
@@ -123,7 +126,22 @@ struct Ephemeris {
     u32 issue;
   } clock_params;
 
-  [[nodiscard]] f64 ecc_anomaly(TimeOfWeek sys_time, u8 n_iter = 5) const;
+  [[nodiscard]] f64 ecc_anomaly(TimeOfWeek sys_time, u8 n_iter = 5) const {
+    f64 semmaj_axis = semmaj_axis_sqrt * semmaj_axis_sqrt;
+    f64 mean_motion_corr =
+        std::sqrt(GRAV_CONST_WGS84 / std::pow(semmaj_axis, 3)) + mean_motion_diff;
+    f64 time_diff = sys_time - ref_tow;
+    f64 mean_anomaly_corr = mean_anomaly + mean_motion_corr * time_diff;
+
+    f64 ecc_anomaly = mean_anomaly_corr;
+
+    for (int i = 0; i < n_iter; i++) {
+      ecc_anomaly += (mean_anomaly_corr - ecc_anomaly + eccentricity * std::sin(ecc_anomaly)) /
+                     (1 - eccentricity * std::cos(ecc_anomaly));
+    }
+
+    return ecc_anomaly;
+  }
   [[nodiscard]] WGS84Position position(TimeOfWeek sys_time) const {
     f64 time_diff = sys_time - ref_tow;
     f64 ecc_anom = ecc_anomaly(sys_time);
@@ -152,7 +170,7 @@ struct Ephemeris {
                          .z = orb_y * std::sin(inclination)};
   }
 
-  [[nodiscard]] f64 clock_corr(TimeOfWeek sys_time, bool is_single_freq = true) {
+  [[nodiscard]] f64 clock_corr(TimeOfWeek sys_time, bool is_single_freq = true) const {
     const f64 F = -2 * std::sqrt(GRAV_CONST_WGS84) / std::pow(LIGHT_SPEED, 2);
     f64 rel_clock_corr = F * eccentricity * semmaj_axis_sqrt * std::sin(ecc_anomaly(sys_time));
 
@@ -165,9 +183,92 @@ struct Ephemeris {
 };
 
 struct Measurement {
-  SignalID signal;
+  SignalID sid;
   TimeOfWeek tow;
-  std::optional<f64> code_pseudorange;
-  std::optional<f64> carrier_pseudorange;
+};
+
+class PVTSolver {
+public:
+  PVTSolver() : filter(4, 0) {}
+  void add_signal(SignalID sid) { signal_offsets.emplace(sid, filter.add_obs_dim()); }
+
+  void update_ephemeris(SignalID sid, Ephemeris&& ephemeris) {
+    ephemerides.emplace(sid, ephemeris);
+  }
+
+  void update(std::span<const Measurement> measurements) {
+    assert(measurements.size() == signal_offsets.size());
+    Measurement ref_meas = *std::ranges::max_element(
+        measurements,
+        [](const Measurement& lhs, const Measurement& rhs) { return (lhs.tow - rhs.tow) < 0; });
+
+    Eigen::VectorXd meas_vec(measurements.size());
+    for (size_t meas_i = 0; meas_i < measurements.size(); meas_i++) {
+      const Measurement& meas = measurements[meas_i];
+      if (!ephemerides.contains(meas.sid)) {
+        std::cout << "no ephemeris for PRN " << meas.sid.prn << "\n";
+        return;
+      }
+      const Ephemeris& meas_eph = ephemerides[meas.sid];
+
+      meas_vec(meas_i) = 299792458 * (ref_meas.tow - meas.tow);
+      meas_vec(meas_i) += 299792458 * meas_eph.clock_corr(meas.tow);
+    }
+
+    filter.update(
+        meas_vec,
+        [&](auto state) {
+          auto state_step_cov = Eigen::MatrixXd::Identity(4, 4);
+          return std::make_pair(state, state_step_cov);
+        },
+        [&](auto state) {
+          Eigen::VectorXd observations(measurements.size());
+          Eigen::MatrixXd obs_jacobian(measurements.size(), 4);
+          for (size_t meas_i = 0; meas_i < measurements.size(); meas_i++) {
+            const Measurement& meas = measurements[meas_i];
+            const Ephemeris& meas_eph = ephemerides[meas.sid];
+
+            TimeOfWeek transmit_time = meas.tow;
+            WGS84Position sat_pos;
+            f64 range;
+            for (size_t est_i = 0; est_i < 2; est_i++) {
+              sat_pos = meas_eph.position(transmit_time);
+              range = (state(Eigen::seq(0, 2)) - sat_pos.vector()).norm();
+              transmit_time = meas.tow + (-range/299792458) + (-state[3]/299792458);
+              std::cout << "est_i=" << est_i << "\n";
+              std::cout << std::format("pos: x={}, y={}, z={}\n", state(0), state(1), state(2));
+              std::cout << std::format("sat_pos: x={}, y={}, z={}\n", sat_pos.x, sat_pos.y, sat_pos.z);
+              std::cout << std::format("range={}\n", range);
+            }
+
+            Eigen::Vector3d pos_delta;
+            pos_delta[0] = sat_pos.x - state[0];
+            pos_delta[1] = sat_pos.y - state[1];
+            pos_delta[2] = sat_pos.z - state[2];
+
+            observations(meas_i) = range + state[3];
+            pos_delta.normalize();
+            obs_jacobian(meas_i, 0) = -pos_delta[0];
+            obs_jacobian(meas_i, 1) = -pos_delta[1];
+            obs_jacobian(meas_i, 2) = -pos_delta[2];
+            obs_jacobian(meas_i, 3) = 1;
+            std::cout << "obs_jacobian:" << obs_jacobian << "\n";
+          }
+          return std::make_pair(observations, obs_jacobian);
+        });
+
+    std::cout << std::format("PVT update: x={}, y={}, z={}, delta_t={}\n", filter.state(0),
+                             filter.state(1), filter.state(2), filter.state(3));
+    auto [lat, lon, height] = (WGS84Position {.x=filter.state(0), .y=filter.state(1), .z=filter.state(2)}).lat_lon_height();
+    lat *= 180/std::numbers::pi;
+    lon *= 180/std::numbers::pi;
+    std::cout << std::format("pvt: {},{},{}\n", obs_i++, lat, lon);
+  }
+
+private:
+  size_t obs_i = 0;
+  ExtendedKalmanFilter<Eigen::Dynamic, Eigen::Dynamic> filter;
+  std::unordered_map<SignalID, size_t> signal_offsets;
+  std::unordered_map<SignalID, Ephemeris> ephemerides;
 };
 };  // namespace weaver

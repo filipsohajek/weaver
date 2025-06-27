@@ -53,7 +53,7 @@ struct KalmanLoopFilter : public LoopFilter {
     f64 code_freq = this->code_freq;
     if (params.code_aiding)
       code_freq += aiding_factor() * doppler_freq;
-    std::cout << std::format("kalman: update: carrier_freq={:.2f}, code_freq={:.2f}, code_phase_adj={:.6f}, carr_phase_adj={:.6f}\n", doppler_freq, code_freq, code_phase_err, carr_phase_err);
+    //std::cout << std::format("kalman: update: carrier_freq={:.2f}, code_freq={:.2f}, code_phase_adj={:.6f}, carr_phase_adj={:.6f}\n", doppler_freq, code_freq, code_phase_err, carr_phase_err);
 
     return {.code_freq = code_freq,
             .carrier_freq = doppler_freq,

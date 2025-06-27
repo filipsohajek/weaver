@@ -5,8 +5,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-#set(CMAKE_CXX_FLAGS "-DEIGEN_FFTW_DEFAULT -O3 -march=native -ffast-math -Wall -Wextra")
-set(CMAKE_CXX_FLAGS "-g -DEIGEN_FFTW_DEFAULT -fsanitize=address -ffast-math -march=native -mtune=native -Wall -Wextra -Wno-ignored-attributes")
+set(CMAKE_CXX_FLAGS "-O3 -g -DEIGEN_FFTW_DEFAULT -march=native -ffast-math -Wall -Wextra")
+#set(CMAKE_CXX_FLAGS "-g -DEIGEN_FFTW_DEFAULT -fsanitize=address -ffast-math -march=native -mtune=native -Wall -Wextra -Wno-ignored-attributes")
 
 include_directories(include)
 find_package(Catch2 3 REQUIRED)
